@@ -1,0 +1,113 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="Common">
+      <UniqueIdentifier>{1527f702-8857-49ed-8ad1-74b261e99dd0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;hm;inl;inc;xsd</Extensions>
+    </Filter>
+    <Filter Include="Common\Wow64Ext">
+      <UniqueIdentifier>{0d841591-a1c9-4e3b-a9af-a7d4ea10c7e0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Common\PAQ8">
+      <UniqueIdentifier>{b1f46734-e822-4ceb-8d76-c6b7d00de75e}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="GlobalInjector.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="LoaderCode.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\COMMON\Utils.cpp">
+      <Filter>Common</Filter>
+    </ClCompile>
+    <ClCompile Include="DriverCode.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="GlobalInjector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="LoaderCode.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\ThirdParty\WOW64Ext\wow64ext.hpp">
+      <Filter>Common\Wow64Ext</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\ThirdParty\WOW64Ext\NtDefs.h">
+      <Filter>Common\Wow64Ext</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\CompileTime.hpp">
+      <Filter>Common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\DrvLoader.hpp">
+      <Filter>Common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\FormatPE.h">
+      <Filter>Common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\HDE.h">
+      <Filter>Common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\StrUtils.hpp">
+      <Filter>Common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\UniHook.hpp">
+      <Filter>Common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\Utils.h">
+      <Filter>Common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\InjDllLdr.hpp">
+      <Filter>Common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\PAQ8\Paq8.hpp">
+      <Filter>Common\PAQ8</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\PAQ8\PaqCtxMap.hpp">
+      <Filter>Common\PAQ8</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\PAQ8\PaqEncoder.hpp">
+      <Filter>Common\PAQ8</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\PAQ8\PaqFilters.hpp">
+      <Filter>Common\PAQ8</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\PAQ8\PaqMdlJPEG.hpp">
+      <Filter>Common\PAQ8</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\PAQ8\PaqMixer.hpp">
+      <Filter>Common\PAQ8</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\PAQ8\PaqModels.hpp">
+      <Filter>Common\PAQ8</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\PAQ8\PaqUtils.hpp">
+      <Filter>Common\PAQ8</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\SrvControl.hpp">
+      <Filter>Common</Filter>
+    </ClInclude>
+    <ClInclude Include="CBProcess.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="Resources.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+</Project>

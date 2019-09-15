@@ -1,0 +1,3 @@
+GInjer.exe -U
+
+pause

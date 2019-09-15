@@ -1,0 +1,313 @@
+﻿
+TODO: Make module ext order configurable
+TODO: Search for modules in process` current directory
+TODO: Tray icon for start/stop operations (Not service)
+---------------------------------------------------------------------------------------------------------
+
+ZERO BITS:
+{
+https://stackoverflow.com/questions/50429365/what-is-the-most-reliable-portable-way-to-allocate-memory-at-low-addresses-on
+
+ Supplies the number of high order address bits that must be zero in the base address of the section view. 
+ The value of this argument must be less than or equal to the maximum number of zero bits and is only used 
+ when memory management determines where to allocate the view (i.e. when BaseAddress is null).
+
+ If ZeroBits is zero, then no zero bit constraints are applied.
+
+ If ZeroBits is greater than 0 and less than 32, then it is the number of leading zero bits from bit 31. 
+ Bits 63:32 are also required to be zero. This retains compatibility with 32-bit systems. 
+ If ZeroBits is greater than 32, then it is considered as a mask and then number of leading zero are counted out in the mask. 
+ This then becomes the zero bits argument.
+
+-------------------------------
+ Windows 10 X64:
+  ZeroBits = (ZeroBits < 32) ? (ZeroBits + 32) : (63 - RtlFindMostSignificantBit(aZeroBits)
+  if(ZeroBits > 53)return FAIL;
+---------------------
+ Windows 7 X64:
+  ZeroBits = (ZeroBits < 32) ? (ZeroBits + 32) : (63 - RtlFindMostSignificantBit(aZeroBits)
+  if(ZeroBits > 53)return FAIL;
+---------------------
+ Windows 7 X32:
+   if(aZeroBits > 21)return FAIL;
+}
+---------------------------------------------------------------------------------------------------------
+/*
+ FILE_MAP_COPY:
+
+   Copy on write access. If you create the map with PAGE_WRITECOPY and the view with FILE_MAP_COPY, you will receive a view to file. If you write to it, 
+    the pages are automatically swappable and the modifications you make will not go to the original data file.
+
+   Windows 95/98/Me: You must pass PAGE_WRITECOPY to CreateFileMapping; otherwise, an error will be returned.
+    If you share the mapping between multiple processes using DuplicateHandle or OpenFileMapping and one process writes to a view, 
+    the modification is propagated to the other process. The original file does not change.
+
+   Windows NT/2000 or later: There is no restriction as to how the hFileMappingObject parameter must be created. Copy on write is valid for any type of view.
+    If you share the mapping between multiple processes using DuplicateHandle or OpenFileMapping and one process writes to a view, 
+    the modification is not propagated to the other process. The original file does not change.
+*/
+---------------------------------------------------------------------------------------------------------
+/*
+  X32 Win10 LdrSystemDllInitBlock:
+  {
+   DWORD Size;   // 0x80
+   DWORD Unk1
+   DWORD Unk2
+   DWORD Unk3
+   PVOID LdrInitializeThunk
+   PVOID KiUserExceptionDispatcher
+   PVOID KiUserApcDispatcher
+   PVOID KiUserCallbackDispatcher
+   PVOID ExpInterlockedPopEntrySListFault
+   PVOID ExpInterlockedPopEntrySListResume
+   PVOID ExpInterlockedPopEntrySListEnd
+   PVOID RtlUserThreadStart
+   PVOID RtlpQueryProcessDebugInformationRemote
+   PVOID This ntdll.dll base
+   PVOID This LdrSystemDllInitBlock
+   .....
+  }
+
+  X64 Win10 LdrSystemDllInitBlock:        PspWow64SystemDllData
+  {
+   00 DWORD Size           // STATIC 0x80
+   04 DWORD SepRmDefaultCap
+   08 QWORD SepRmCapTable
+   10 DWORD LdrInitializeThunk
+   14 DWORD KiUserExceptionDispatcher
+   18 DWORD KiUserApcDispatcher
+   1C DWORD KiUserCallbackDispatcher
+   20 DWORD ExpInterlockedPopEntrySListFault
+   24 DWORD ExpInterlockedPopEntrySListResume
+   28 DWORD ExpInterlockedPopEntrySListEnd
+   2C DWORD RtlUserThreadStart
+   30 DWORD RtlpQueryProcessDebugInformationRemote
+   34 DWORD This ntdll.dll base
+   38 DWORD This LdrSystemDllInitBlock
+   3C DWORD NULL
+   40 DWORD NULL
+   44 DWORD NULL
+   48 DWORD NULL
+   4C DWORD NULL
+   50 DWORD Random        // ExGenRandom(1);
+   58 QWORD Unknown
+   60 QWORD res1 MmGetCfgBitMapInformation 1
+   68 QWORD res2 MmGetCfgBitMapInformation 1
+   70 QWORD res1 MmGetCfgBitMapInformation 2
+   78 QWORD res2 MmGetCfgBitMapInformation 2
+  }
+
+ X32 Windows 7 0x7FFE0000 KI_USER_SHARED_DATA: 7FFE0340:
+   PVOID LdrInitializeThunk
+   PVOID KiUserExceptionDispatcher
+   PVOID KiUserApcDispatcher
+   PVOID KiUserCallbackDispatcher
+   PVOID LdrHotPatchRoutine
+   PVOID ExpInterlockedPopEntrySListFault
+   PVOID ExpInterlockedPopEntrySListResume
+   PVOID ExpInterlockedPopEntrySListEnd
+   PVOID RtlUserThreadStart
+   PVOID RtlpQueryProcessDebugInformationRemote
+   PVOID EtwpNotificationThread
+   PVOID This ntdll.dll base
+
+
+
+
+ // All statically linked DLLs will get CONTEXT* as their lpReserved  parameter of DllMain
+ LdrInitializeThunk(CONTEXT* ThreadCtx, PVOID NtDllBase)   // On x32 these are on stack and ESP is not accessible to GetThreadContext
+  {
+   LdrInitializeThunk x32 stack:
+    4           <<< EBP(NULL) goes there
+    4 RetAddr    // NULL
+    4 CONTEXT*
+    4 PVOID      // NtDllBase
+    4 NULL
+      CONTEXT32  //  Hook uses EBP to access EAX value in CONTEXT to replace 'call LdrpInitialize' with 'call [EPB+XX]'    // [CONTEXT+0B0h] is offset of EAX   // And + 0x14 extra on stack
+  }
+  {
+   LdrInitializeThunk x64 stack:  // RCX: CONTEXT, RDX: NtDllBase
+    8 ReservArg
+    8 ReservArg
+    8 ReservArg
+    8 ReservArg
+    8           <<< RBX(NULL) goes there
+    8 RetAddr    // NULL
+    8 Reserved   // NULL
+    8 Reserved   // NULL
+    8 Reserved   // NULL
+    8 Reserved   // NULL
+      CONTEXT64  //  Hook uses RCX to access EAX value in CONTEXT to replace 'call LdrpInitialize' with 'call [RCX+XX]'    // [CONTEXT+78h]  is offset of RAX  
+  }
+
+  ZwUnmapViewOfSection(HANDLE ProcessHandle, PVOID BaseAddress) // Can unmap PE mapping given only its base address
+
+
+  NtOpenFile -> NtCreateSection -> LdrpMapDllWithSectionHandle -> LdrpMinimalMapModule -> NtMapViewOfSectionEx
+
+
+  NtCreateProcessEx ->PspCreateProcess -> PspAllocateProcess -> MmInitializeProcessAddressSpace -> PsMapSystemDlls(ntdll.dll and wow64 ntdll.dll only) -> PspMapSystemDll -> MiMapViewOfSection -> MiMapViewOfImageSection
+
+  "\\SystemRoot\\System32\\ntdll.dll"
+  "\\SystemRoot\\SysWOW64\\ntdll.dll"
+
+ ntdll.dll have NULL AddressOfEntryPoint in its PE
+
+
+ LdrpAppCompatRedirect
+ LdrpSaferIsDllAllowedRoutine
+ AVrfDllLoadNotification
+ LdrpSendDllNotifications
+ LdrpLoadKnownDll
+
+
+ PspPrepareSystemDllInitBlock
+*/  
+
+
+
+// NOTE: KnownDlls sections is already fixed, if you create image mapping of same file then you have to fix its relocs 
+
+
+
+/*
+ First checked 'ProcessName.xxx' modules, next 'FolderName.xxx' modules and finally 'LdrDirName'.
+ Then 'FolderName.xxx' and 'LdrDirName' checks repeaded until drive`s root.
+ If CurrentDirectory path is different from EXE startup then it is checked for 'FolderName.xxx' and 'LdrDirName' until drive`s root.
+
+ ProcessExeName.xxx(For specific EXE) or FolderName.xxx(For any EXE in that folder):
+ .xxx(Configurable by INI):
+ .x32:   x32 DLL for a x32 or WOW64 process
+ .x64:   x64 DLL for a x64 process
+
+ Folder with same name to load all modules from it
+ Override folder in loader path to load modules to matching path
+
+*/
+
+/*
+The TEB consumes 1 page of memory (4 KB on x86 and x64 CPUs).
+
+"In the case of the 64-bit NT kernel, the function responsible for the initial dispatch of user-mode APCs 
+(for native 64-bit processes as well as WoW64 processes)  is the 64-bit version of KiUserApcDispatcher(), 
+exported from the native NTDLL. Unless explicitly requested otherwise by the APC issuer (via PsWrapApcWow64Thread()) 
+the APC routine itself will also execute 64-bit code, and thus will be able to load 64-bit modules."
+
+"After digging into it with a debugger it looks like ZwSetInformationThread and ThreadQuerySetWin32StartAddress was intentionally broken with Vista. 
+ In XP the function works as I would expect; however in Vista+ after passing all validation and getting in the switch case to ThreadQuerySetWin32StartAddress now always returns Invalid Param."
+
+On x64 there is nothing on stack when returned fron kernel to RtlUserThreadStart. And WOW64 threads IS returned as X64. For X64 real entry point(One used in CreateThread) is passed in ECX
+*/
+
+ ------------------------------------------------------------
+.text:00007FFA13623AC0 NtUnmapViewOfSection proc near          ; CODE XREF: LdrpDereferenceModule+CB↑p
+.text:00007FFA13623AC0                                         ; LdrpLoadDependentModule+1857↑p ...
+.text:00007FFA13623AC0                 mov     r10, rcx        ; NtUnmapViewOfSection
+.text:00007FFA13623AC3                 mov     eax, 2Ah
+.text:00007FFA13623AC8                 syscall                 ; Low latency system call
+.text:00007FFA13623ACA                 retn
+ ------------------------------------------------------------
+.text:000000018009C590 4C 8B D1                                   mov     r10, rcx        ; NtUnmapViewOfSection
+.text:000000018009C593 B8 2A 00 00 00                             mov     eax, 2Ah
+.text:000000018009C598 F6 04 25 08 03 FE 7F 01                    test    byte ptr ds:7FFE0308h, 1
+.text:000000018009C5A0 75 03                                      jnz     short loc_18009C5A5
+.text:000000018009C5A2 0F 05                                      syscall                 ; Low latency system call
+.text:000000018009C5A4 C3                                         retn
+.text:000000018009C5A5                            ; ---------------------------------------------------------------------------
+.text:000000018009C5A5
+.text:000000018009C5A5                            loc_18009C5A5:                          ; CODE XREF: NtUnmapViewOfSection+10↑j
+.text:000000018009C5A5 CD 2E                                      int     2Eh             ; DOS 2+ internal - EXECUTE COMMAND
+.text:000000018009C5A5                                                                    ; DS:SI -> counted CR-terminated command string
+.text:000000018009C5A7 C3                                         retn
+------------------------------------------------------------    // WOW64
+.text:4B2E8DA0 B8 2A 00 00 00                             mov     eax, 2Ah        ; NtUnmapViewOfSection
+.text:4B2E8DA5 BA E0 D4 2F 4B                             mov     edx, offset _Wow64SystemServiceCall@0 ; Wow64SystemServiceCall()
+.text:4B2E8DAA FF D2                                      call    edx ; Wow64SystemServiceCall() ; Wow64SystemServiceCall()
+.text:4B2E8DAC C2 08 00                                   retn    8
+ ------------------------------------------------------------   // Native Win7 X32
+77366580 | B8 81010000              | mov eax,181                                           |
+77366585 | BA 0003FE7F              | mov edx,<&KiFastSystemCall>                           | 7FFE0300:"pl6wtl6w"
+7736658A | FF12                     | call dword ptr ds:[edx]                               |
+7736658C | C2 0800                  | ret 8                                                 |
+ ------------------------------------------------------------
+
+Native x32 only:
+  KiFastSystemCall      // Ptr: +0x0300
+  KiFastSystemCallRet   // Ptr: +0x0304
+
+-------------------------------- ****************************** -----------------------------------------
+Exception thrown at 0x7512E82D (KernelBase.dll) in GInjer.exe: 0xC0000005: Access violation writing location 0x00055562.
+
+ BOOL res = CreateProcessW(NULL,L"\\Device\\HarddiskVolume6\\TEST\\GINJER\\TestProcess32.exe",NULL,NULL,true,NORMAL_PRIORITY_CLASS|CREATE_SUSPENDED,NULL,NULL,&PrStartInfo,&ProcInf); 
+
+_CreateProcessInternalW@48
+
+7512E815 | 898D 4CFDFFFF            | mov dword ptr ss:[ebp-2B4],ecx                             |
+7512E81B | 899D A0FCFFFF            | mov dword ptr ss:[ebp-360],ebx                             |
+7512E821 | 66:8B01                  | mov ax,word ptr ds:[ecx]                                   |
+7512E824 | 66:8985 60FDFFFF         | mov word ptr ss:[ebp-2A0],ax                               |
+7512E82B | 33C0                     | xor eax,eax                                                |
+7512E82D | 66:8901                  | mov word ptr ds:[ecx],ax                                   <<<< ECX is End of a process path(terminating 0), crash if it is not writable! // AX = 0
+7512E830 | 3985 24FDFFFF            | cmp dword ptr ss:[ebp-2DC],eax                             
+7512E836 | 0F85 F2760300            | jne kernelbase.75165F2E                                    |
+7512E83C | 8D85 24FDFFFF            | lea eax,dword ptr ss:[ebp-2DC]                             |
+7512E842 | 50                       | push eax                                                   |
+7512E843 | FFB5 90FDFFFF            | push dword ptr ss:[ebp-270]                                
+7512E849 | FF15 EC481D75            | call dword ptr ds:[<&RtlGetExePath>]                       |
+7512E84F | 8985 A0FDFFFF            | mov dword ptr ss:[ebp-260],eax                             |
+
+
+----------------------------------------------------
+                       LdrLoadDll     
+
+typedef NTSTATUS(__fastcall* _LdrLoadDll)(
+    _In_opt_ UINT32 Flags,
+    _In_opt_ PUINT32 Reserved,
+    _In_ PUNICODE_STRING ModuleFileName,
+    _Out_ HMODULE* ModuleHandle
+    );
+
+#define DONT_RESOLVE_DLL_REFERENCES         0x00000001
+#define LOAD_LIBRARY_AS_DATAFILE            0x00000002
+// reserved for internal LOAD_PACKAGED_LIBRARY: 0x00000004
+#define LOAD_WITH_ALTERED_SEARCH_PATH       0x00000008
+#define LOAD_IGNORE_CODE_AUTHZ_LEVEL        0x00000010
+#define LOAD_LIBRARY_AS_IMAGE_RESOURCE      0x00000020
+#define LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE  0x00000040
+#define LOAD_LIBRARY_REQUIRE_SIGNED_TARGET  0x00000080
+#define LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR    0x00000100
+#define LOAD_LIBRARY_SEARCH_APPLICATION_DIR 0x00000200
+#define LOAD_LIBRARY_SEARCH_USER_DIRS       0x00000400
+#define LOAD_LIBRARY_SEARCH_SYSTEM32        0x00000800
+#define LOAD_LIBRARY_SEARCH_DEFAULT_DIRS    0x00001000
+ 
+#if (NTDDI_VERSION >= NTDDI_WIN10_RS1)
+ 
+#define LOAD_LIBRARY_SAFE_CURRENT_DIRS      0x00002000
+ 
+#define LOAD_LIBRARY_SEARCH_SYSTEM32_NO_FORWARDER   0x00004000
+ 
+#else
+ 
+//
+// For anything building for downlevel, set the flag to be the same as LOAD_LIBRARY_SEARCH_SYSTEM32
+// such that they're treated the same when running on older version of OS.
+//
+ 
+#if (NTDDI_VERSION >= NTDDI_WIN10_RS2)
+ 
+#define LOAD_LIBRARY_OS_INTEGRITY_CONTINUITY   0x00008000
+ 
+#endif
+-------------------------------------------------------------------------------------------------------
+NTSTATUS
+NTAPI
+LdrLoadDll(
+IN PWSTR SearchPath OPTIONAL,
+IN PULONG LoadFlags OPTIONAL,
+IN PUNICODE_STRING Name,
+OUT PVOID *BaseAddress OPTIONAL
+);
+
+*LoadFlags should be set to IMAGE_FILE_EXECUTABLE_IMAGE if you're not
+loading a DLL but an EXE instead.
