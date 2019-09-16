@@ -5,10 +5,9 @@
  
 <img align="left" hspace="20" src="/Main.png">
 
----
 + *A signed kernel driver is used to receive a process creation callbacks*
 + *A normal or reflective injection is supported*
-+ *Injection of a selected DLLs into almost every newly created processes*
++ *Injection of selected DLLs into almost every newly created processes*
 + *Injection of a DLL before **and** after static import initialization*
 + *Injection of an x64 DLL during WOW64 initialization*
 + *Ability to inject before a process initialization*
