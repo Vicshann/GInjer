@@ -32,6 +32,7 @@ extern HANDLE hConsOut;
 volatile HINSTANCE hInstance; 
 SERVICE_STATUS_HANDLE hSvcStatus; 
 BOOL IsRunOnWow64 = FALSE;
+UINT GDirPathLen = 0;
 CBProcess*  pro; 
 CDrvLoader* drv;
 CObjStack<SInjProcDesc>* ProcStack;
@@ -72,6 +73,7 @@ struct    // MODULE:    [ProcessName|FolderName] [BeforeExt|AfterExt] [X32Ext|X6
 } ModuleExts[ModuleNamesCnt];
 
 wchar_t  StartUpDir[MAX_PATH];
+wchar_t  GlobalDllDir[MAX_PATH];
 //============================================================================================================
 template <typename T> int _stdcall GetMainThreadInfo(DWORD ProcessId, DWORD* ThreadIdOut, UINT64* ThreadTebOut)
 {
@@ -199,24 +201,30 @@ int _stdcall GetModulesFromDirectory(HANDLE hDir, DWORD BaseFlg, PWSTR DirRoot, 
  int Total = 0;
  for(FILE_NAMES_INFORMATION* FNameRec = (FILE_NAMES_INFORMATION*)NameBuf;FNameRec;FNameRec=(FILE_NAMES_INFORMATION*)&((PBYTE)FNameRec)[FNameRec->NextEntryOffset])
   {
-   if(((FNameRec->FileNameLength == 2)&&(FNameRec->FileName[0]=='.'))||((FNameRec->FileNameLength == 4)&&(*(PDWORD)&FNameRec->FileName==0x002E002E)))continue;
-   PWSTR FExt = GetFileExt(FNameRec->FileName);
-   for(int ctr=0;ctr < ModuleNamesCnt;ctr++)    // Check modules with name as containing directory
+   if(!((FNameRec->FileNameLength == 2)&&(FNameRec->FileName[0]=='.')) && !((FNameRec->FileNameLength == 4)&&(*(PDWORD)&FNameRec->FileName==0x002E002E)))
     {
-     if(0!=lstrcmpiW(FExt, &ModuleExts[ctr].ExtVal[1]))continue;
-     SPathHandleDescr Obj;
-     Obj.Flags  = BaseFlg|ModuleExts[ctr].Flags;
-     Obj.hFSObj = NULL;
-     PWSTR FName = Obj.Path.Assign(NULL, DirRootLen+(FNameRec->FileNameLength/sizeof(WCHAR))+1);    // No terminating 0
-     lstrcpyW(FName, DirRoot);
-     lstrcpyW(&FName[DirRootLen+1], FNameRec->FileName);
-     FName[DirRootLen] = '\\';
-     if(OpenFileOrDirectory(FName, false, &Obj.hFSObj, Obj.Path.Count()) >= 0)
+     PWSTR FExt = GetFileExt(FNameRec->FileName);
+     for(int ctr=0;ctr < ModuleNamesCnt;ctr++)    // Check modules with name as containing directory
       {
-       ModArr->Add(&Obj);
-       memset(&Obj,0,sizeof(Obj));  // Prevent Obj.Path from being released on destruction of Obj 
+       if(0!=lstrcmpiW(FExt, &ModuleExts[ctr].ExtVal[1]))continue;
+       SPathHandleDescr Obj;
+       Obj.Flags  = BaseFlg|ModuleExts[ctr].Flags;
+       Obj.hFSObj = NULL;
+       PWSTR FName = Obj.Path.Assign(NULL, DirRootLen+(FNameRec->FileNameLength/sizeof(WCHAR))+1);    // No terminating 0
+       lstrcpyW(FName, DirRoot);
+       lstrcpyW(&FName[DirRootLen+1], FNameRec->FileName);
+       FName[DirRootLen] = '\\';
+       if(OpenFileOrDirectory(FName, false, &Obj.hFSObj, Obj.Path.Count()) >= 0)
+        {
+         Total++;
+         if(ModArr)
+          {
+           ModArr->Add(&Obj);
+           memset(&Obj,0,sizeof(Obj));  // Prevent Obj.Path from being released on destruction of Obj 
+          }
+        }
+       break;
       }
-     break;
     }
    if(!FNameRec->NextEntryOffset)break;
   }
@@ -301,7 +309,7 @@ int _stdcall GetKnownModulesFromPath(PWSTR ProcPath, CModPathArr* ModArr, int Pa
      lstrcpyW(&Path[PathLenLeft], LdrDirNames[ctr].NameVal);
      if(OpenFileOrDirectory(Path, true, &HVal, PLen) >= 0)
       {
-       TotalCtr++; 
+       TotalCtr++;     // Count only the directory itself
        if(ModArr)
         {
          if(!FNameBuf)FNameBuf = VirtualAlloc(NULL,FNamBufLen,MEM_COMMIT,PAGE_READWRITE);
@@ -312,6 +320,19 @@ int _stdcall GetKnownModulesFromPath(PWSTR ProcPath, CModPathArr* ModArr, int Pa
     } 
    ProcessRoot = 0; 
   }
+
+ if(GDirPathLen && *GlobalDllDir)      // Read modules from a Global Directory
+  {
+   HANDLE HVal = NULL;
+   if(OpenFileOrDirectory(GlobalDllDir, true, &HVal, GDirPathLen) >= 0)
+    {       
+     if(!FNameBuf)FNameBuf = VirtualAlloc(NULL,FNamBufLen,MEM_COMMIT,PAGE_READWRITE);
+     int tot = GetModulesFromDirectory(HVal, 0, GlobalDllDir, GDirPathLen, ModArr, FNameBuf, FNamBufLen); 
+     if(tot > 0)TotalCtr += tot;      
+     if(HVal)CloseHandle(HVal);
+    }
+  }
+
  if(FNameBuf)VirtualFree(FNameBuf,0,MEM_RELEASE); 
  DBGMSG("Known objects found: %u", TotalCtr);
  return TotalCtr;
@@ -809,7 +830,7 @@ bool _stdcall IsAnotherInstRunning(void)      // TODO: A stealthy way to detect 
  wsprintfW(NameBuf, L"Global\\%ls", &MtxName);
  HANDLE hMut = CreateMutexW(NULL,FALSE,NameBuf);
  int LastErr = GetLastError();
- DBGMSG("Mutex opened: %08X, %u, %ls",hMut,LastErr,&NameBuf);
+ DBGMSG("Mutex: %08X, %u, %ls",hMut,LastErr,&NameBuf);
  if(!hMut)return (ERROR_ACCESS_DENIED == LastErr);    
  return (ERROR_ALREADY_EXISTS == LastErr);
 }
@@ -1120,13 +1141,40 @@ void _stdcall LoadConfiguration(void)
  INIRefreshValueStr<PWSTR>(CFGSECNAME, L"DrvName", L"", DrvName, countof(DrvName), (PWSTR)&IniFilePath);
  INIRefreshValueStr<PWSTR>(CFGSECNAME, L"SrvName", L"", SrvName, countof(SrvName), (PWSTR)&IniFilePath);  
  INIRefreshValueStr<PWSTR>(CFGSECNAME, L"MtxName", L"", MtxName, countof(MtxName), (PWSTR)&IniFilePath);     
- INIRefreshValueStr<PWSTR>(CFGSECNAME, L"SrvDesc", ctENCSW(L"Local Security Mitigation Service"), SrvDesc, countof(SrvDesc), (PWSTR)&IniFilePath);     
-                                                        
+ INIRefreshValueStr<PWSTR>(CFGSECNAME, L"SrvDesc", ctENCSW(L"Local Security Mitigation Service"), SrvDesc, countof(SrvDesc), (PWSTR)&IniFilePath);  
+                                                       
  for(int ctr=0,tot=sizeof(ModExts)/sizeof(SNameExtCfg);ctr < tot;ctr++)
    if(ModExts[ctr].Name)ModExts[ctr].ValLen = INIRefreshValueStr<PWSTR>(NAMSECNAME, ModExts[ctr].Name, ModExts[ctr].Value, ModExts[ctr].Value, countof(ModExts[ctr].Value), (PWSTR)&IniFilePath); 
  for(int ctr=0,tot=sizeof(DirExts)/sizeof(SNameExtCfg);ctr < tot;ctr++)
    if(DirExts[ctr].Name)DirExts[ctr].ValLen = INIRefreshValueStr<PWSTR>(NAMSECNAME, DirExts[ctr].Name, DirExts[ctr].Value, DirExts[ctr].Value, countof(DirExts[ctr].Value), (PWSTR)&IniFilePath); 
-         
+            
+ if(GDirPathLen = INIRefreshValueStr<PWSTR>(NAMSECNAME, L"DirGlobal", L"DllGlobal", GlobalDllDir, countof(GlobalDllDir), (PWSTR)&IniFilePath))    // Should not be created automatically 
+  {
+   if(GlobalDllDir[1] != ':')
+    {
+     wchar_t TmpDir[MAX_PATH];   
+     PWSTR SrcPtr = TmpDir;
+     if(IsFilePathDelim(*SrcPtr))SrcPtr++;
+     if(IsFilePathDelim(SrcPtr[GDirPathLen-1]))SrcPtr[GDirPathLen-1] = 0;
+     lstrcpyW(TmpDir, GlobalDllDir);
+     lstrcpyW(GlobalDllDir,StartUpDir);
+     lstrcatW(GlobalDllDir, SrcPtr);      
+    }       
+     else if(IsFilePathDelim(GlobalDllDir[GDirPathLen-1]))GlobalDllDir[GDirPathLen-1]=0;   // Must not end with a slash
+
+   wchar_t DrvPath[4] = {GlobalDllDir[0],':',0}; 
+   wchar_t DDevPath[MAX_PATH];
+   if(DWORD PLen = QueryDosDeviceW(DrvPath,DDevPath,countof(DDevPath)))  // Returns number of stored char, not actual length of the string
+    {
+     lstrcatW(DDevPath, &GlobalDllDir[2]);   // 'X:\Path' to '\Dev ice\HarddiskVolume1\Path'
+     DDevPath[4] = '\\';    
+     DDevPath[5] = DDevPath[6] = '?';
+     lstrcpyW(GlobalDllDir, &DDevPath[4]);
+     GDirPathLen = lstrlenW(GlobalDllDir);
+    }
+   DBGMSG("Global DLL directory: %ls", &GlobalDllDir);
+  }
+
  if(!*DrvName)
   {
    lstrcpyW(DrvName,GetFileName((PWSTR)&IniFilePath));

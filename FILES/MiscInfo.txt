@@ -1,6 +1,6 @@
 ﻿
 TODO: Make module ext order configurable
-TODO: Search for modules in process` current directory
+TODO: Search for modules in process` current directory ?
 TODO: Tray icon for start/stop operations (Not service)
 ---------------------------------------------------------------------------------------------------------
 
@@ -166,7 +166,7 @@ https://stackoverflow.com/questions/50429365/what-is-the-most-reliable-portable-
 
 
 
-// NOTE: KnownDlls sections is already fixed, if you create image mapping of same file then you have to fix its relocs 
+// NOTE: KnownDlls sections is already fixed, if you create image mapping of the same file then you have to fix its relocs 
 
 
 
@@ -309,5 +309,4 @@ IN PUNICODE_STRING Name,
 OUT PVOID *BaseAddress OPTIONAL
 );
 
-*LoadFlags should be set to IMAGE_FILE_EXECUTABLE_IMAGE if you're not
-loading a DLL but an EXE instead.
+*LoadFlags should be set to IMAGE_FILE_EXECUTABLE_IMAGE if you're not loading a DLL but an EXE instead.
