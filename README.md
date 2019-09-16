@@ -5,7 +5,6 @@
  
 <img align="left" hspace="20" src="/Main.png">
 
----
 + *A signed kernel driver is used to receive a process creation callbacks*
 + *A normal or reflective injection is supported*
 + *Injection of a selected DLLs into almost every newly created processes*
