@@ -72,7 +72,7 @@ UINT _fastcall ReadLoader32(PBYTE DstBuf, UINT BufSize)
 #ifdef HAVEBINLDR32     
  if(BufSize > BSizeBinLdr32)BufSize = BSizeBinLdr32;
  for(int ctr=0,bleft=BufSize;bleft > 0;ctr++,bleft--)DstBuf[ctr] = DecryptByteWithCtr(((PBYTE)&BinLdr32)[ctr],XKeyBinLdr32,bleft); 
- LOGMSG("Decrypted with %02X",BYTE(XKeyBinLdr32));
+ DBGMSG("Decrypted with %02X",BYTE(XKeyBinLdr32));
  return BufSize;
 #else
  return 0;
@@ -84,7 +84,7 @@ UINT _fastcall ReadLoader64(PBYTE DstBuf, UINT BufSize)
 #ifdef HAVEBINLDR64    
  if(BufSize > BSizeBinLdr64)BufSize = BSizeBinLdr64;
  for(int ctr=0,bleft=BufSize;bleft > 0;ctr++,bleft--)DstBuf[ctr] = DecryptByteWithCtr(((PBYTE)&BinLdr64)[ctr],XKeyBinLdr64,bleft); 
- LOGMSG("Decrypted with %02X",BYTE(XKeyBinLdr64));
+ DBGMSG("Decrypted with %02X",BYTE(XKeyBinLdr64));
  return BufSize;
 #else
  return 0;

@@ -52,7 +52,7 @@ UINT _fastcall ReadDriver32(PBYTE DstBuf, UINT BufSize)
 #ifdef HAVEBINDRV32     
  if(BufSize > BSizeBinDrv32)BufSize = BSizeBinDrv32;
  for(int ctr=0,bleft=BufSize;bleft > 0;ctr++,bleft--)DstBuf[ctr] = DecryptByteWithCtr(((PBYTE)&BinDrv32)[ctr],XKeyBinDrv32,bleft); 
- LOGMSG("Decrypted with %02X",XKeyBinDrv32);
+ DBGMSG("Decrypted with %02X",XKeyBinDrv32);
  return BufSize;
 #else
  return 0;
@@ -64,7 +64,7 @@ UINT _fastcall ReadDriver64(PBYTE DstBuf, UINT BufSize)
 #ifdef HAVEBINDRV64    
  if(BufSize > BSizeBinDrv64)BufSize = BSizeBinDrv64;
  for(int ctr=0,bleft=BufSize;bleft > 0;ctr++,bleft--)DstBuf[ctr] = DecryptByteWithCtr(((PBYTE)&BinDrv64)[ctr],XKeyBinDrv64,bleft); 
- LOGMSG("Decrypted with %02X",XKeyBinDrv64);
+ DBGMSG("Decrypted with %02X",XKeyBinDrv64);
  return BufSize;
 #else
  return 0;
@@ -120,21 +120,21 @@ int _fastcall SaveDriverToFile(PWSTR Name, bool IsX64, PWSTR FilePathOut)
    SrcBuf.AssignFrom(NULL, SizeDriver64());
    unsigned long Size = 0;
    void* Buffer = SrcBuf.GetBuffer(&Size);
-   if(!ReadDriver64((PBYTE)Buffer, Size)){LOGMSG("DrvBin64.cpp is not preperly generated!"); return -1;}
+   if(!ReadDriver64((PBYTE)Buffer, Size)){DBGMSG("DrvBin64.cpp is not preperly generated!"); return -1;}
   }
    else
     {
      SrcBuf.AssignFrom(NULL, SizeDriver32());
      unsigned long Size = 0;
      void* Buffer = SrcBuf.GetBuffer(&Size);
-     if(!ReadDriver32((PBYTE)Buffer, Size)){LOGMSG("DrvBin32.cpp is not preperly generated!"); return -2;}
+     if(!ReadDriver32((PBYTE)Buffer, Size)){DBGMSG("DrvBin32.cpp is not preperly generated!"); return -2;}
     }
  int res = NPAQ8::strm_decompress(1, 0, SrcBuf, DstBuf);    // Fastest (Same size)
- if(res < 0){LOGMSG("Failed to decompress the driver: %s, %u",Name,(int)IsX64); return -3;}
+ if(res < 0){DBGMSG("Failed to decompress the driver: %s, %u",Name,(int)IsX64); return -3;}
  unsigned long Size = 0;
  void* Buffer = DstBuf.GetBuffer(&Size);
- if(!Buffer || !Size){LOGMSG("Decompressed driver is empty: %s, %u",Name,(int)IsX64); return -4;}
- LOGMSG("Decompressed driver %ls size: %u",Name,Size);
+ if(!Buffer || !Size){DBGMSG("Decompressed driver is empty: %s, %u",Name,(int)IsX64); return -4;}
+ DBGMSG("Decompressed driver %ls size: %u",Name,Size);
 
  HANDLE hFile = NULL;
  wchar_t DrvPath[MAX_PATH];
@@ -159,10 +159,10 @@ int _fastcall SaveDriverToFile(PWSTR Name, bool IsX64, PWSTR FilePathOut)
    lstrcatW(DrvPath, L".dll");
    hFile = CreateFileW(DrvPath,GENERIC_WRITE,0,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
   }
- if(!IsValidHandle(hFile)){LOGMSG("Failed to create the driver file!"); return -5;}
+ if(!IsValidHandle(hFile)){DBGMSG("Failed to create the driver file!"); return -5;}
  DWORD Result = 0;
- if(!WriteFile(hFile,Buffer,Size,&Result,NULL) || (Result != Size)){CloseHandle(hFile); LOGMSG("Failed to write the driver file: %ls",&DrvPath); return -6;} 
- LOGMSG("Driver saved to: %ls",&DrvPath);
+ if(!WriteFile(hFile,Buffer,Size,&Result,NULL) || (Result != Size)){CloseHandle(hFile); DBGMSG("Failed to write the driver file: %ls",&DrvPath); return -6;} 
+ DBGMSG("Driver saved to: %ls",&DrvPath);
  CloseHandle(hFile); 
  lstrcpyW(FilePathOut, DrvPath);
  return 0;
