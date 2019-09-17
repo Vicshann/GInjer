@@ -203,16 +203,17 @@ int _stdcall GetModulesFromDirectory(HANDLE hDir, DWORD BaseFlg, PWSTR DirRoot, 
   {
    if(!((FNameRec->FileNameLength == 2)&&(FNameRec->FileName[0]=='.')) && !((FNameRec->FileNameLength == 4)&&(*(PDWORD)&FNameRec->FileName==0x002E002E)))
     {
-     PWSTR FExt = GetFileExt(FNameRec->FileName);
+     UINT FNameLenChr = FNameRec->FileNameLength/sizeof(WCHAR);
+     PWSTR FExt = GetFileExt(FNameRec->FileName, FNameLenChr);
      for(int ctr=0;ctr < ModuleNamesCnt;ctr++)    // Check modules with name as containing directory
       {
-       if(0!=lstrcmpiW(FExt, &ModuleExts[ctr].ExtVal[1]))continue;
+       if(!NSTR::IsStrEqualIC(FExt, &ModuleExts[ctr].ExtVal[1], ModuleExts[ctr].ExtLen-1))continue;      
        SPathHandleDescr Obj;
        Obj.Flags  = BaseFlg|ModuleExts[ctr].Flags;
        Obj.hFSObj = NULL;
-       PWSTR FName = Obj.Path.Assign(NULL, DirRootLen+(FNameRec->FileNameLength/sizeof(WCHAR))+1);    // No terminating 0
+       PWSTR FName = Obj.Path.Assign(NULL, DirRootLen+FNameLenChr+1);    // No terminating 0
        lstrcpyW(FName, DirRoot);
-       lstrcpyW(&FName[DirRootLen+1], FNameRec->FileName);
+       lstrcpynW(&FName[DirRootLen+1], FNameRec->FileName, FNameLenChr+1);
        FName[DirRootLen] = '\\';
        if(OpenFileOrDirectory(FName, false, &Obj.hFSObj, Obj.Path.Count()) >= 0)
         {

@@ -2,6 +2,10 @@
 TODO: Make module ext order configurable
 TODO: Search for modules in process` current directory ?
 TODO: Tray icon for start/stop operations (Not service)
+
+TODO: Use a pipe for remote logging(Requires a dedicated thread). Sharing own log file handle is a bad idea. 
+
+NOTE: Debug version of loader writes log to target process` console (when it is started from cmd.exe). A duplicated console handle works somehow:)
 ---------------------------------------------------------------------------------------------------------
 
 ZERO BITS:
