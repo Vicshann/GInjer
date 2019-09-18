@@ -99,7 +99,7 @@ struct SBlkDesc
 {
  SLdrDesc LdrDesc32;   
  SLdrDesc LdrDesc64;  
- UINT64   hDbgLogOutA;      // Use it only for injection debugging!
+ UINT64   hDbgLogOutA;      // Use it only for injection debugging!   // One is some console handle and another is a file or a pipe handle
  UINT64   hDbgLogOutB;      // Use it only for injection debugging!
  UINT64   AddrOfLdrSystemDllInitBlock;
  UINT64   AddrOfContext;

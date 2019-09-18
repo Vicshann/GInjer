@@ -16,15 +16,22 @@
 #include "GlobalInjector.h"
 
 //------------------------------------------------------------------------------------------------------------
+enum EInjTypes {itPatch=0,itRemap};
+
 // Configs
-bool ReceiveDbgLog   = true;
-int  StealthInjLevel = 2;   // 0-No stealth; 1-Avoid ThreadOpen And VmRW; 2-Avoid Suspending
-UINT DrvTimeout  = CBProcess::DefTimeout; 
-UINT DrvAltitude = CBProcess::DefAltitude; 
+bool ForceTgtCon     = false; // Force a target process to display a Console for debug messages logging
+bool ReceiveDbgLog   = true;  // Receive debug messages from the loader and injected modules
+bool NormDllPaths    = true;  // Normalize paths from '\??\HarddiskVolumeX\' to 'C:\'
+bool DirectInject    = true;  // Inject right from the Callback Thread to avoid suspending of a target Process/Thread   (Disabled in InjectType=1 for a target under a debugger)
+bool UseMainThread   = false; // Works only partially when DirectInject is enabled 
+UINT InjectType      = 0;     // 0-Inject by patching ntdll.dll; 1=Inject by remapping ntdll.dll
+UINT DrvTimeout   = CBProcess::DefTimeout; 
+UINT DrvAltitude  = CBProcess::DefAltitude; 
 wchar_t DrvName[128];
 wchar_t SrvName[128];
 wchar_t MtxName[128];
 wchar_t SrvDesc[128];
+wchar_t PipeNam[128];
 
 extern HANDLE hLogFile;
 extern HANDLE hConsOut;
@@ -40,6 +47,8 @@ HANDLE hEvtProcStack;
 HANDLE hEvtCloseA;
 HANDLE hEvtCloseB;
 HANDLE hWorkerTh;
+HANDLE hDbgLogPipe;
+HANDLE hHostLogPipe;
 SNtDllDesc NtDllInfo;
 
 
@@ -220,6 +229,7 @@ int _stdcall GetModulesFromDirectory(HANDLE hDir, DWORD BaseFlg, PWSTR DirRoot, 
          Total++;
          if(ModArr)
           {
+           if(NormDllPaths)Obj.SetDosPathByHandle(Obj.Path.c_data(), Obj.Path.Count());  
            ModArr->Add(&Obj);
            memset(&Obj,0,sizeof(Obj));  // Prevent Obj.Path from being released on destruction of Obj 
           }
@@ -270,7 +280,8 @@ int _stdcall GetKnownModulesFromPath(PWSTR ProcPath, CModPathArr* ModArr, int Pa
              SPathHandleDescr* Obj = ModArr->Add(NULL);
              Obj->Flags  = ProcessRoot|ModuleExts[ctr].Flags;
              Obj->hFSObj = HVal;
-             Obj->Path.Assign(Path, PLen)[PLen] = 0;    // No terminating 0
+             if(NormDllPaths)Obj->SetDosPathByHandle(Path, PLen); 
+               else  Obj->Path.Assign(Path, PLen)[PLen] = 0;    // No terminating 0
             }
              else if(HVal)CloseHandle(HVal);
           }
@@ -296,7 +307,8 @@ int _stdcall GetKnownModulesFromPath(PWSTR ProcPath, CModPathArr* ModArr, int Pa
          SPathHandleDescr* Obj = ModArr->Add(NULL);
          Obj->Flags  = ProcessRoot|ModuleExts[ctr].Flags;
          Obj->hFSObj = HVal;
-         Obj->Path.Assign(Path, PLen)[PLen] = 0;    // No terminating 0
+         if(NormDllPaths)Obj->SetDosPathByHandle(Path, PLen); 
+           else Obj->Path.Assign(Path, PLen)[PLen] = 0;    // No terminating 0
         }
          else if(HVal)CloseHandle(HVal);
       }
@@ -493,7 +505,7 @@ SBlkDesc* _stdcall WriteSharedData(CModPathArr* ModArr, PBYTE Addr, long Size, U
      else Desc->ModuleBase = Desc->ModRawSize = Desc->ModEPOffs = Desc->ModSize = 0;   
      
    lstrcpynW(Desc->ModulePath, Mod->Path.c_data(), Mod->Path.Count()+1);        //   lstrcpynW(Desc->ModulePath, &Mod->Path.c_data()[4], Mod->Path.Count()-4+1);   // Skips /??/
-   Desc->ModulePath[1] = '\\';           // LdrLoadDll accepts only '\\?\' but not '\??\'
+   if(!NormDllPaths)Desc->ModulePath[1] = '\\';           // LdrLoadDll accepts only '\\?\' but not '\??\'
    Desc->PrevSize = PrevSize;      
    Desc->Flags    = Mod->Flags;
    Desc->PathSize = Mod->Path.Count();   // In chars, not including 0
@@ -510,8 +522,8 @@ int _stdcall SetHookOfNtDll(SBlkDesc* BlkHdr, SInjProcDesc* ProcDesc)
  bool Remapped = false;
  BYTE Patch[]  = {0x50,0x68,0,0,0,0,0xC3};    // push eax; push XXXXXXXX; ret    // Target block is in 2GB
  *(PDWORD)&Patch[2] = (IsRunOnWow64)?(BlkHdr->LdrDesc64.LdrProcAddr):(BlkHdr->LdrDesc32.LdrProcAddr);
- DBGMSG("Enter");
- if(StealthInjLevel > 0)
+ DBGMSG("Enter: InjType=%u", ProcDesc->InjType);
+ if(ProcDesc->InjType == itRemap)
   {
    DBGMSG("Remapping ntdll.dll");
    if(IsRunOnWow64)
@@ -551,7 +563,7 @@ int _stdcall SetHookOfNtDll(SBlkDesc* BlkHdr, SInjProcDesc* ProcDesc)
          else {DBGMSG("Failed to unmap %08X%08X: %08X", (DWORD)(NtDllInfo.NtDllBase64 >> 32), (DWORD)NtDllInfo.NtDllBase64, stat);}
       }     
   }
- if((StealthInjLevel <= 0) || !Remapped)
+ if((ProcDesc->InjType == itPatch) || !Remapped)    // Fallback to Patc if remapping is failed  // NOTE: Remapping may fail AFTER UnmapViewOfSection of ntdll.dll then a target process will crash anyway
   {
    DBGMSG("Patching ntdll.dll");
    if(IsRunOnWow64)      // All threads start as x64
@@ -585,10 +597,13 @@ int _stdcall SetHookOfNtDll(SBlkDesc* BlkHdr, SInjProcDesc* ProcDesc)
  if(ReceiveDbgLog)
   {
    HANDLE hOutA = NULL;
-   HANDLE hOutB = NULL;
-   if(IsValidHandle(hLogFile)){DuplicateHandle(GetCurrentProcess(), hLogFile, ProcDesc->hProcess, &hOutA, 0, FALSE, DUPLICATE_SAME_ACCESS); DBGMSG("Duplicated %u hLogFile: %p", GetLastError(), hOutA);} 
-   if(IsValidHandle(hConsOut)){DuplicateHandle(GetCurrentProcess(), hConsOut, ProcDesc->hProcess, &hOutB, 0, FALSE, DUPLICATE_SAME_ACCESS); DBGMSG("Duplicated %u hConsOut: %p", GetLastError(), hOutB);}   // Writing to it returns STATUS_UNSUCCESSFUL
+   if(IsValidHandle(hDbgLogPipe)){DuplicateHandle(GetCurrentProcess(), hDbgLogPipe, ProcDesc->hProcess, &hOutA, 0, FALSE, DUPLICATE_SAME_ACCESS); DBGMSG("Duplicated %u hDbgLogPipe: %p", GetLastError(), hOutA);} 
    BlkHdr->hDbgLogOutA = (UINT64)hOutA;
+  }
+ if(ForceTgtCon)
+  {
+   HANDLE hOutB = NULL;
+   if(IsValidHandle(hConsOut)){DuplicateHandle(GetCurrentProcess(), hConsOut, ProcDesc->hProcess, &hOutB, 0, FALSE, DUPLICATE_SAME_ACCESS); DBGMSG("Duplicated %u hConsOut: %p", GetLastError(), hOutB);}   // Writing to it returns STATUS_UNSUCCESSFUL
    BlkHdr->hDbgLogOutB = (UINT64)hOutB;
   }
  DBGMSG("Done");
@@ -621,17 +636,32 @@ int _stdcall TryInjectProcess(SInjProcDesc* Desc)
 //------------------------------------------------------------------------------------------------------------
 int  _stdcall AddNewProcessToStack(DWORD ProcessId, PWSTR ProcessImagePath, UINT PathLenChr)
 {
+ CHndl hThread;
+ int InjType = InjectType;
+ DWORD MainThreadId = 0;
  DWORD PrAccessFlg = PROCESS_VM_OPERATION|PROCESS_QUERY_INFORMATION;
  if(ReceiveDbgLog)PrAccessFlg |= PROCESS_DUP_HANDLE;     // Without this DuplicateHandle to target process will fail
- if(StealthInjLevel == 1)PrAccessFlg |= PROCESS_SUSPEND_RESUME;            // For NtSuspendProcess
- if(StealthInjLevel <  1)PrAccessFlg |= PROCESS_VM_READ|PROCESS_VM_WRITE;  // For NtWriteVirtualMemory
+ if(InjType == itPatch)PrAccessFlg |= PROCESS_VM_READ|PROCESS_VM_WRITE;  // For NtWriteVirtualMemory
+ if(DirectInject && !UseMainThread)PrAccessFlg |= PROCESS_SUSPEND_RESUME;            // For NtSuspendProcess
+
  CHndl hProcess = OpenProcess(PrAccessFlg,FALSE,ProcessId);  
+ if(hProcess.IsValid() && (InjType == itRemap)) 
+  {
+   BOOL TgtDebugged = FALSE;
+   if(CheckRemoteDebuggerPresent(hProcess, &TgtDebugged) && TgtDebugged)  // If the target process is started by a debugger then unmapping its ntdll.dll will cause a deadlock in NtUnmapViewOfSection
+    {
+     DBGMSG("Target process %u is being debugged!",ProcessId);
+     InjType = itPatch;    // Debuggers can`t operate after ntdll remapping
+     PrAccessFlg |= PROCESS_VM_READ|PROCESS_VM_WRITE; 
+     hProcess.Close();
+     hProcess.Set(OpenProcess(PrAccessFlg,FALSE,ProcessId));   // Reopen it with new access rights
+    }
+  }                                    
  if(!hProcess){DBGMSG("Failed to open process %u: Code=%u, %ls",ProcessId,GetLastError(),ProcessImagePath); return -1;}
  DBGMSG("Opened process %u: %ls",ProcessId,ProcessImagePath);   // Is there are way to get the main thread ID from the driver without subscription to all thread events?
 
- if(StealthInjLevel <= 0)     // Suspends every new process(Main Thread) and checks its path in WorkerThread 
-  {
-   DWORD  MainThreadId;
+ if(UseMainThread)     // Suspends every new process(Main Thread) and checks its path in WorkerThread 
+  {  
    UINT64 MainThreadTeb;
    int res = 0;
    if(IsRunOnWow64)res = GetMainThreadInfo<UINT64>(ProcessId, &MainThreadId, &MainThreadTeb);     // What is slower: Request full processes and threads list on each process creation or search paths to modules to inject?
@@ -639,33 +669,29 @@ int  _stdcall AddNewProcessToStack(DWORD ProcessId, PWSTR ProcessImagePath, UINT
    if(res < 0){DBGMSG("GetMainThreadInfo failed with %i",res); return -2;}
    DWORD ThAccessFlg = THREAD_QUERY_INFORMATION|THREAD_SUSPEND_RESUME;
 #ifdef _DEBUG
-   ThAccessFlg |= THREAD_GET_CONTEXT|THREAD_SET_CONTEXT;
+   ThAccessFlg |= THREAD_GET_CONTEXT;  // |THREAD_SET_CONTEXT;
 #endif
-   CHndl hThread = OpenThread(ThAccessFlg, FALSE, MainThreadId);     // No CONTEXT avaliavle (:GetThreadContext will hang when called from driver callback)
+   hThread.Set(OpenThread(ThAccessFlg, FALSE, MainThreadId));     // No CONTEXT is avaliavle (:GetThreadContext will deadlock when called from the driver callback)
    if(!hThread){DBGMSG("Failed to open thread %u: Code=%u",MainThreadId,GetLastError()); return -3;}
    DBGMSG("Opened thread %u",MainThreadId);
-   if(NTSTATUS stat = NtSuspendThread(hThread, NULL)){DBGMSG("Failed to suspend thread %u: Code=%08X", MainThreadId, stat); return -4;}   // Suspend the thread to see its unmodified stack in debugger later(It is empty)   // NOTE: Requesting thread`s context here causes deadlock
-   SInjProcDesc obj;
-   obj.Assign(hProcess.Invalidate(), hThread.Invalidate(), ProcessImagePath, PathLenChr);
-   ProcStack->PushObject(&obj);
-   SetEvent(hEvtProcStack);
   }
-   else   // Check if the process have some modules to inject on its path   // How to get its current directory here?
+ 
+ if(DirectInject)     // Do full process path search here and try to inject
+  {
+   SInjProcDesc obj;
+   obj.InjType = InjType;
+   obj.Assign(hProcess, hThread, ProcessImagePath, PathLenChr);   // No main thread handle passed
+   TryInjectProcess(&obj);       // The Main thread handle is not required for this
+  }
+   else      // Suspend the process without opening its main thread
     {
-     if(StealthInjLevel > 1)     // Do full process path search here and try to inject
-      {
-       SInjProcDesc obj;
-       obj.Assign(hProcess, NULL, ProcessImagePath, PathLenChr);   // No main thread handle passed
-       TryInjectProcess(&obj);
-      }
-       else      // Suspend the process without opening its main thread
-        {
-         if(NTSTATUS stat = NtSuspendProcess(hProcess)){DBGMSG("Failed to suspend process %u: Code=%08X", ProcessId, stat); return -5;}  
-         SInjProcDesc obj;
-         obj.Assign(hProcess.Invalidate(), NULL, ProcessImagePath, PathLenChr);   // No main thread handle passed
-         ProcStack->PushObject(&obj);
-         SetEvent(hEvtProcStack);
-        }
+     if(hThread.IsValid()){ if(NTSTATUS stat = NtSuspendThread(hThread, NULL)){DBGMSG("Failed to suspend thread %u: Code=%08X", MainThreadId, stat); return -5;} }  // Suspend the thread to see its unmodified stack in debugger later(It is empty)   // NOTE: Requesting thread`s context here causes deadlock
+       else { if(NTSTATUS stat = NtSuspendProcess(hProcess)){DBGMSG("Failed to suspend process %u: Code=%08X", ProcessId, stat); return -4;} }    // The process must be opened with PROCESS_SUSPEND_RESUME    
+     SInjProcDesc obj;
+     obj.InjType = InjType;
+     obj.Assign(hProcess.Invalidate(), hThread.Invalidate(), ProcessImagePath, PathLenChr);   // No main thread handle passed
+     ProcStack->PushObject(&obj);
+     SetEvent(hEvtProcStack);
     }
  DBGMSG("Done");
  return 0;
@@ -676,8 +702,41 @@ int  _stdcall AddNewProcessToStack(DWORD ProcessId, PWSTR ProcessImagePath, UINT
 //
 DWORD __stdcall WorkerThreadProc(LPVOID lpThreadParameter)
 {
- while(WAIT_OBJECT_0 == WaitForSingleObject(hEvtProcStack, INFINITE))
+ OVERLAPPED DbgPipeOvr;
+ HANDLE hPipeEvt = NULL;
+ HANDLE HndlArr[2];
+ UINT HndlCnt = 1;
+ HndlArr[0] = hEvtProcStack; 
+ BYTE MsgBuffer[1050];
+ if(hHostLogPipe)
   {
+   HndlCnt++; 
+   HndlArr[1] = hPipeEvt = CreateEventW(NULL, FALSE, TRUE, NULL);    // The Event is left signaled and will trigger first WaitForMultipleObjects     
+  }   
+ while(DWORD WaitRes = WaitForMultipleObjects(HndlCnt, HndlArr, FALSE, INFINITE))    // 
+  {
+   if(WAIT_FAILED == WaitRes){DBGMSG("Wait failed with %u",GetLastError()); break;}
+   if(WaitRes >= WAIT_ABANDONED_0)continue;
+   UINT Index = WaitRes - WAIT_OBJECT_0;
+   if(Index > 0)     // Process a debug pipe message
+    {
+     DWORD BytesReady = 0;
+   //  ResetEvent(DbgPipeOvr.hEvent);
+     GetOverlappedResult(hHostLogPipe, &DbgPipeOvr, &BytesReady, FALSE);  
+     for(;;)
+      {
+       if(BytesReady){LOGTXT((char*)&MsgBuffer, BytesReady); }
+       BytesReady = 0;
+    //   ResetEvent(DbgPipeOvr.hEvent);
+       memset(&DbgPipeOvr,0,sizeof(DbgPipeOvr));
+       DbgPipeOvr.hEvent = hPipeEvt;
+      // BOOL res = ReadFile(hHostLogPipe,&MsgBuffer,sizeof(MsgBuffer),&BytesReady,&DbgPipeOvr);
+      // int err = GetLastError();
+      // if(!res)break;
+       if(!ReadFile(hHostLogPipe,&MsgBuffer,sizeof(MsgBuffer),&BytesReady,&DbgPipeOvr))break;
+      }
+     continue;
+    }
    SInjProcDesc obj;
    if(!ProcStack->PopObject(&obj)){DBGMSG("Nothing!"); continue;}                    
    DBGMSG("Process: PrH=%08X, TrH=%08X, Path=%ls",obj.hProcess,obj.hMainThread,obj.ProcPath.c_data());
@@ -710,10 +769,11 @@ DWORD __stdcall WorkerThreadProc(LPVOID lpThreadParameter)
 #endif
    if(TryInjectProcess(&obj) < 0){DBGMSG("Failed to inject!");}  
    DBGMSG("Done with: PrH=%08X",obj.hProcess);                                    
-   if(obj.hMainThread)ResumeThread(obj.hMainThread);
-     else if(StealthInjLevel < 2)NtResumeProcess(obj.hProcess);
+   if(obj.hMainThread)ResumeThread(obj.hMainThread);     // If Thread is NULL then it is the target process has been suspended 
+     else NtResumeProcess(obj.hProcess);
    obj.Close();
   }
+ if(hPipeEvt)CloseHandle(hPipeEvt);
  CloseHandle(hWorkerTh);
  return 0;
 }
@@ -860,6 +920,7 @@ void _stdcall TestInjectionx(bool TgtX64)
  BOOL res = CreateProcessW(NULL,ProcPath,NULL,NULL,true,NORMAL_PRIORITY_CLASS|CREATE_SUSPENDED,NULL,NULL,&PrStartInfo,&ProcInf);    // Accepts only '\\?\'
  if(!res){DBGMSG("CreateProcess failed: %ls",ProcPath); return;}           
  SInjProcDesc obj;
+ obj.InjType = InjectType;
  obj.Assign(ProcInf.hProcess, ProcInf.hThread, ProcPath, PathLen);
  TryInjectProcess(&obj);  
  ResumeThread(ProcInf.hThread);
@@ -892,12 +953,10 @@ void _stdcall SysMain(DWORD UnkArg)
 // GenerateBinDrv();    // <<<<<<<<<<<<<<<< No driver binaries in github repository!
 #ifdef TESTRUN
  {
-//      wchar_t DPath[512];
-   //   HANDLE hdrv = SaveDriverToFile(DrvName, IsRunOnWow64, DPath);    
-//    InitNtDllsHooks();
- //      IsAnotherInstRunning();     // <<<<<<<<<<<<<<<<< Not working!!!
+    DoAppInitialization();                  
     TestInjectionx(true);
     TestInjectionx(false);
+      Sleep(3000);
     ExitProcess(0); 
  }
 #endif
@@ -924,8 +983,8 @@ void _stdcall SysMain(DWORD UnkArg)
      GetModuleFileNameW(hInstance,ExePathBuf,countof(ExePathBuf));
      DBGMSG("Service EXE: %ls",&ExePathBuf);                 
      if(int err = srv.CreateSrv(ExePathBuf, SrvName, SrvDesc, SERVICE_WIN32_OWN_PROCESS, SERVICE_AUTO_START, false)){LOGMSG("Install: CreateService failed with %u!", err); break;}
-     if(int err = srv.StartSrv()){LOGMSG("StartService failed with %u!", err); break;}
-     LOGMSG("The Service '%ls' has been created and started.",&SrvName);   
+     if(int err = srv.StartSrv()){OUTMSG("StartService failed with %u!", err); break;}
+     OUTMSG("The Service '%ls' has been created and started.",&SrvName);   
      break;
     } 
    if(NSTR::IsStrEqualIC("-U", Cmd))
@@ -936,9 +995,9 @@ void _stdcall SysMain(DWORD UnkArg)
      GetModuleFileNameW(hInstance,ExePathBuf,countof(ExePathBuf));
      DBGMSG("Service EXE: %ls",&ExePathBuf);
      if(int err = srv.CreateSrv(ExePathBuf, SrvName, NULL, SERVICE_WIN32_OWN_PROCESS, SERVICE_AUTO_START, true)){LOGMSG("Uninstall: OpenService failed with %u!", err); break;}
-     if(int err = srv.StopSrv()){LOGMSG("StopService failed with %u!", err); break;}
-     if(int err = srv.RemoveService()){LOGMSG("RemoveService failed with %u!", err);}   
-     LOGMSG("The Service '%ls' has been stopped and removed.",&SrvName);  
+     if(int err = srv.StopSrv()){OUTMSG("StopService failed with %u!", err); break;}
+     if(int err = srv.RemoveService()){OUTMSG("RemoveService failed with %u!", err);}   
+     OUTMSG("The Service '%ls' has been stopped and removed.",&SrvName);  
      break;
     } 
   }
@@ -956,7 +1015,7 @@ void _stdcall SysMain(DWORD UnkArg)
     ExitProcess(1);     
    }
 
- if(IsAnotherInstRunning()){DBGMSG("Another instance is already running!"); ExitProcess(-1);}  // TODO: Chech if already running as a service      
+ if(IsAnotherInstRunning()){OUTMSG("Another instance is already running!"); ExitProcess(-1);}  // TODO: Chech if already running as a service      
 
  SERVICE_TABLE_ENTRY ServiceTable[] = 
   {
@@ -969,7 +1028,7 @@ void _stdcall SysMain(DWORD UnkArg)
    DBGMSG("Not run as a service!");
    if(DoAppInitialization())
     {
-     DBGMSG("Waiting...");
+     OUTMSG("Waiting...");
      WaitForSingleObject(hEvtCloseA, INFINITE);   //   pro.WaitForWorkerThread(INFINITE); 
     }
    DoAppFinalization();
@@ -1090,9 +1149,10 @@ bool _stdcall DoAppFinalization(void)
    delete(pro);
    delete(drv);
   }
- if(hEvtProcStack){SetEvent(hEvtProcStack); CloseHandle(hEvtProcStack);}  // Let workrer thread to see 'BreakWork'  
+ if(hEvtProcStack)SetEvent(hEvtProcStack);  
  if(hWorkerTh)WaitForSingleObject(hWorkerTh, 9000);
  if(ProcStack)delete(ProcStack);
+ if(hEvtProcStack)CloseHandle(hEvtProcStack);
  DBGMSG("Done");
  return (ErrCtr <= 0);
 }
@@ -1103,9 +1163,21 @@ bool _stdcall DoAppInitialization(void)
  if(InitNtDllsHooks() < 0)return false;
  ProcStack = new CObjStack<SInjProcDesc>();
  DWORD ThreadID;
+ if(ReceiveDbgLog)
+  {
+   wchar_t PipeName[MAX_PATH];
+   wsprintfW(PipeName,L"\\\\.\\pipe\\DP%ls",&PipeNam);                                                
+   hHostLogPipe = CreateNamedPipeW(PipeName,PIPE_ACCESS_INBOUND|FILE_FLAG_OVERLAPPED,PIPE_WAIT|PIPE_TYPE_BYTE,1,2048,2048,30000,NULL);   // PIPE_UNLIMITED_INSTANCES         PIPE_TYPE_MESSAGE|PIPE_READMODE_MESSAGE
+   if(INVALID_HANDLE_VALUE != hHostLogPipe)
+    {
+     hDbgLogPipe = CreateFileW(PipeName,GENERIC_WRITE,0,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+     if(INVALID_HANDLE_VALUE == hDbgLogPipe){DBGMSG("Failed to open pipe: %ls",&PipeName); CloseHandle(hHostLogPipe); hHostLogPipe = NULL; ReceiveDbgLog = false;}
+    }
+     else {DBGMSG("Failed to create pipe: %ls",&PipeName); ReceiveDbgLog = false;}
+  }
  hEvtProcStack = CreateEventW(NULL, FALSE, FALSE, NULL);
  hEvtCloseA = CreateEventW(NULL, TRUE,  FALSE, NULL);
- if(StealthInjLevel < 2)hWorkerTh = CreateThread(0, 0, WorkerThreadProc, NULL, 0, &ThreadID);
+ hWorkerTh = CreateThread(0, 0, WorkerThreadProc, NULL, 0, &ThreadID);   // Always required in case od a debugged target process
 #ifndef TESTRUN
  wchar_t DrvNameEx[128] = {0};
  wchar_t DPath[MAX_PATH] = {0};
@@ -1132,12 +1204,16 @@ bool _stdcall DoAppInitialization(void)
 void _stdcall LoadConfiguration(void)
 {
  wchar_t IniFilePath[MAX_PATH];  
- lstrcpyW(IniFilePath,LogFilePath);
+ lstrcpyW(IniFilePath,LogFilePath);                                                          
  lstrcpyW(GetFileExt((PWSTR)&IniFilePath),L"ini");
  LogMode = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"LogMode",LogMode|lmCons,(PWSTR)&IniFilePath);     // LogMode   = lmCons|lmFile;// lmFile;  //lmCons;
- ReceiveDbgLog = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"ReceiveDbgLog",ReceiveDbgLog,(PWSTR)&IniFilePath);
- StealthInjLevel = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"StealthInjLevel",StealthInjLevel,(PWSTR)&IniFilePath);
- DrvTimeout  = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"DrvTimeout",DrvTimeout,(PWSTR)&IniFilePath);
+ NormDllPaths = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"NormDllPaths",NormDllPaths,(PWSTR)&IniFilePath);
+ ForceTgtCon = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"ForceTgtCon",ForceTgtCon,(PWSTR)&IniFilePath); 
+ ReceiveDbgLog = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"ReceiveDbgLog",ReceiveDbgLog,(PWSTR)&IniFilePath);            
+ UseMainThread = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"UseMainThread",UseMainThread,(PWSTR)&IniFilePath);             
+ DirectInject = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"DirectInject",DirectInject,(PWSTR)&IniFilePath);
+ InjectType = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"InjectType",InjectType,(PWSTR)&IniFilePath);             
+ DrvTimeout = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"DrvTimeout",DrvTimeout,(PWSTR)&IniFilePath);
  DrvAltitude = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"DrvAltitude",DrvAltitude,(PWSTR)&IniFilePath);
  INIRefreshValueStr<PWSTR>(CFGSECNAME, L"DrvName", L"", DrvName, countof(DrvName), (PWSTR)&IniFilePath);
  INIRefreshValueStr<PWSTR>(CFGSECNAME, L"SrvName", L"", SrvName, countof(SrvName), (PWSTR)&IniFilePath);  
@@ -1191,6 +1267,8 @@ void _stdcall LoadConfiguration(void)
    lstrcpyW(MtxName,GetFileName((PWSTR)&IniFilePath));
    GetFileExt((PWSTR)&MtxName)[-1] = 0;
   }
+ lstrcpyW(PipeNam,GetFileName((PWSTR)&IniFilePath));
+ GetFileExt((PWSTR)&PipeNam)[-1] = 0;     
  BuildNameExts();
 }
 //------------------------------------------------------------------------------------------------------------

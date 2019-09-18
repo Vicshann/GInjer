@@ -74,6 +74,35 @@ struct SPathHandleDescr
  DWORD Flags;
  HANDLE hFSObj;
  CWStrBuf Path;    // No terminating 0
+
+ int SetDosPathByHandle(PWSTR OptPath, UINT OptPathLen)    // GetModuleFileNameW for a injected DLL will return the same path which was used to load it. And not everybody can handle '\??\HarddiskVolumeX\' there ;) 
+  {
+   if(OptPath)                // Should result in a shorter path than '\??\HarddiskVolumeX\'
+    {
+     if(!OptPathLen)OptPathLen = lstrlenW(OptPath);
+     Path.Resize(OptPathLen);
+    }
+     else Path.Resize(MAX_PATH);
+   DWORD Len = GetFinalPathNameByHandleW(this->hFSObj, this->Path.c_data(), this->Path.Count(), VOLUME_NAME_DOS); 
+   if(Len > this->Path.Count())   // Len includes 0
+    {
+     Path.Resize(Len-1);
+     Len = GetFinalPathNameByHandleW(this->hFSObj, this->Path.c_data(), this->Path.Count(), VOLUME_NAME_DOS); 
+    }
+   int  offs = 0;
+   PWSTR Ptr = this->Path.c_data();
+   while(Ptr[offs] && (Ptr[offs] != ':'))offs++;  // And '\\?\C:\' is not acceptable either
+   if(offs > 0)
+    {
+     offs--;
+     Len -= offs;
+     memcpy(Ptr, &Ptr[offs], Len*sizeof(WCHAR));
+    }
+   Path.Resize(Len);
+   this->Path.c_data()[Len] = 0;
+   DBGMSG("Normalized Path: %ls",this->Path.c_data());
+   return this->Path.Count();
+  }
 };
 
 class CModPathArr
@@ -107,6 +136,7 @@ struct SInjProcDesc
 {
  HANDLE hProcess;       // Opened in callback
  HANDLE hMainThread;    // Left in suspended state (The only useful thing that can be done with from driver callback)
+ int    InjType;
  CWStrBuf ProcPath;
 
 // LdrLoadLdd accepts only '\\?\HarddiskVolume6\TEST\GINJER\TestProcess32.exe.ad'
@@ -150,7 +180,7 @@ void Close(void)
 
 bool _stdcall DoAppFinalization(void);
 bool _stdcall DoAppInitialization(void); 
-void _stdcall LoadConfiguration(void);     
+void _stdcall LoadConfiguration(void);    
 int  _stdcall InitNtDllsHooks(void);   
 int _fastcall GenerateBinDrv(void);   
 int _fastcall SaveDriverToFile(PWSTR Name, bool IsX64, PWSTR FilePathOut);    

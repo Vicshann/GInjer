@@ -3,9 +3,13 @@ TODO: Make module ext order configurable
 TODO: Search for modules in process` current directory ?
 TODO: Tray icon for start/stop operations (Not service)
 
-TODO: Use a pipe for remote logging(Requires a dedicated thread). Sharing own log file handle is a bad idea. 
+NOTE: Debug version of loader writes its log to a target process` console (when it is started from cmd.exe). A duplicated console handle works somehow:)
 
-NOTE: Debug version of loader writes log to target process` console (when it is started from cmd.exe). A duplicated console handle works somehow:)
+ISSUE(Fixed): in stealth mode 2 call to UnmapViewOfSection for ntdll.dll for a process started under a debugger causes deadlock
+       DebugActiveProcessStop not helps
+
+ISSUE: No KnownDLLs::ntdll on latest windows 10
+ISSUE: Creation of a shared mapping in place of x64 ntdll.dll in a WOW64 process fails on latest Windows 10 with 'C000000D 	STATUS_INVALID_PARAMETER'
 ---------------------------------------------------------------------------------------------------------
 
 ZERO BITS:
