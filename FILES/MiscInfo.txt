@@ -318,3 +318,17 @@ OUT PVOID *BaseAddress OPTIONAL
 );
 
 *LoadFlags should be set to IMAGE_FILE_EXECUTABLE_IMAGE if you're not loading a DLL but an EXE instead.
+
+
+
+
+
+---------------------------- TEST:
+     {
+      HKEY  hKey;
+      DWORD dwDisposition;                                                  //L"System\\CurrentControlSet\\Services\\GHelloDrv"
+      if(RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Services\\GHelloDrv", 0, KEY_ALL_ACCESS, &hKey))TerminateProcess(GetCurrentProcess(),1); 
+//      if(RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"System\\CurrentControlSet\\Services\\GHelloDrv", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE|KEY_READ, NULL, &hKey, &dwDisposition) != ERROR_SUCCESS)TerminateProcess(GetCurrentProcess(),1); 
+      if(RegSetValueExW(hKey, L"TestVal", 0, REG_SZ, (PBYTE)L"he", 6))TerminateProcess(GetCurrentProcess(),2);
+      RegCloseKey(hKey);
+     }

@@ -112,7 +112,7 @@ int _fastcall GenerateBinDrv(void)
 //---------------------------------------------------------------------------
 #endif
 //---------------------------------------------------------------------------
-int _fastcall SaveDriverToFile(PWSTR Name, bool IsX64, PWSTR FilePathOut)
+int _fastcall SaveDriverToFile(PWSTR Name, bool IsX64, PWSTR FilePathOut, PWSTR NormPathOut)
 {
  NPAQ8::MSTRM SrcBuf, DstBuf;
  if(IsX64)
@@ -137,33 +137,52 @@ int _fastcall SaveDriverToFile(PWSTR Name, bool IsX64, PWSTR FilePathOut)
  DBGMSG("Decompressed driver %ls size: %u",Name,Size);
 
  HANDLE hFile = NULL;
+ DWORD Result = 0;
+ BOOL  WrRes  = 0;
  wchar_t DrvPath[MAX_PATH];
- Wow64EnableWow64FsRedirection(FALSE);  // Required to try to save the driver in 'system32\drivers\' directory
  if(!IsValidHandle(hFile) && GetSystemDirectoryW(DrvPath,countof(DrvPath)))  // Requires Wow64EnableWow64FsRedirection
   {   
    lstrcatW(DrvPath, L"\\drivers\\");
    lstrcatW(DrvPath, Name);
    lstrcatW(DrvPath, L".sys");
+   Wow64EnableWow64FsRedirection(FALSE);  // Required to try to save the driver in 'system32\drivers\' directory
+   if(NormPathOut)lstrcpyW(NormPathOut, DrvPath);
    hFile = CreateFileW(DrvPath,GENERIC_WRITE,0,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
-   if(hFile != INVALID_HANDLE_VALUE)
-    {
+   Wow64EnableWow64FsRedirection(TRUE);  
+   if(hFile != INVALID_HANDLE_VALUE)        // WriteFile may fail with ERROR_INVALID_FUNCTION because some Antivirus seenng a created driver in 'drivers' directory steals its handle and remofes its file
+    {    
      lstrcpyW(DrvPath, L"\\SystemRoot\\System32\\drivers\\");    // To look normal in registry
      lstrcatW(DrvPath, Name);
      lstrcatW(DrvPath, L".sys");
+     WrRes = WriteFile(hFile,Buffer,Size,&Result,NULL);
+     CloseHandle(hFile); 
+     if(!WrRes || (Result != Size)){DBGMSG("Failed to write the driver file(%u): %ls",GetLastError(),&DrvPath); DeleteFileW(DrvPath);}
     }
-  }
- Wow64EnableWow64FsRedirection(TRUE);  
- if(!IsValidHandle(hFile) && GetTempPathW(countof(DrvPath),DrvPath))
+     else 
+      {
+       UINT LstErr = GetLastError(); 
+       DBGMSG("Failed to create the driver(%u) at: %ls",LstErr,&DrvPath);
+       if(LstErr == ERROR_SHARING_VIOLATION){DBGMSG("Trying to reuse an already loaded driver!"); lstrcpyW(FilePathOut, DrvPath); return 0;}
+      }
+  }  
+ if((!WrRes || (Result != Size)) && GetTempPathW(countof(DrvPath),DrvPath))
   {
    lstrcatW(DrvPath, Name);
    lstrcatW(DrvPath, L".dll");
+   if(NormPathOut)lstrcpyW(NormPathOut, DrvPath);
    hFile = CreateFileW(DrvPath,GENERIC_WRITE,0,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+   if(hFile == INVALID_HANDLE_VALUE)
+    {
+     UINT LstErr = GetLastError(); 
+     DBGMSG("Failed to create the driver(%u) at: %ls",LstErr,&DrvPath); 
+     if(LstErr == ERROR_SHARING_VIOLATION){DBGMSG("Trying to reuse an already loaded driver!"); lstrcpyW(FilePathOut, DrvPath); return 0;}
+     return -5;
+    }
+   WrRes = WriteFile(hFile,Buffer,Size,&Result,NULL);   
+   CloseHandle(hFile); 
   }
- if(!IsValidHandle(hFile)){DBGMSG("Failed to create the driver file!"); return -5;}
- DWORD Result = 0;
- if(!WriteFile(hFile,Buffer,Size,&Result,NULL) || (Result != Size)){CloseHandle(hFile); DBGMSG("Failed to write the driver file: %ls",&DrvPath); return -6;} 
- DBGMSG("Driver saved to: %ls",&DrvPath);
- CloseHandle(hFile); 
+ if(!WrRes || (Result != Size)){DBGMSG("Failed to write the driver file(%u): %ls",GetLastError(),&DrvPath); DeleteFileW(DrvPath); return -6;} 
+ DBGMSG("Driver saved to: %ls",&DrvPath); 
  lstrcpyW(FilePathOut, DrvPath);
  return 0;
 }

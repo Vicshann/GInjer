@@ -81,6 +81,7 @@ struct    // MODULE:    [ProcessName|FolderName] [BeforeExt|AfterExt] [X32Ext|X6
  wchar_t ExtVal[NameExtSize*2];
 } ModuleExts[ModuleNamesCnt];
 
+wchar_t  DrvPath[MAX_PATH];
 wchar_t  StartUpDir[MAX_PATH];
 wchar_t  GlobalDllDir[MAX_PATH];
 //============================================================================================================
@@ -1138,6 +1139,17 @@ int _stdcall InitNtDllsHooks(void)
  return 0;
 }
 //------------------------------------------------------------------------------------------------------------
+bool _stdcall DeleteDriverFile(void)
+{
+ if(!*DrvPath)return true;
+ Wow64EnableWow64FsRedirection(FALSE);  // In case the driver has been saved to 'system32\drivers\' directory
+ BOOL err = DeleteFileW(DrvPath);
+ Wow64EnableWow64FsRedirection(TRUE);  
+ if(err){DBGMSG("Removed the driver file: %ls",&DrvPath);}
+   else {DBGMSG("Failed to delete the driver file(%u): %ls",GetLastError(), &DrvPath);}
+ return err; 
+}
+//------------------------------------------------------------------------------------------------------------
 bool _stdcall DoAppFinalization(void)
 {
  DBGMSG("Finalizing...");
@@ -1149,10 +1161,13 @@ bool _stdcall DoAppFinalization(void)
    delete(pro);
    delete(drv);
   }
- if(hEvtProcStack)SetEvent(hEvtProcStack);  
+ DBGMSG("Waiting for WorkerThread termination...");
+ if(hEvtProcStack)SetEvent(hEvtProcStack); 
  if(hWorkerTh)WaitForSingleObject(hWorkerTh, 9000);
  if(ProcStack)delete(ProcStack);
  if(hEvtProcStack)CloseHandle(hEvtProcStack);
+ DBGMSG("Deleting the driver file...");
+ DeleteDriverFile();
  DBGMSG("Done");
  return (ErrCtr <= 0);
 }
@@ -1179,16 +1194,18 @@ bool _stdcall DoAppInitialization(void)
  hEvtCloseA = CreateEventW(NULL, TRUE,  FALSE, NULL);
  hWorkerTh = CreateThread(0, 0, WorkerThreadProc, NULL, 0, &ThreadID);   // Always required in case od a debugged target process
 #ifndef TESTRUN
- wchar_t DrvNameEx[128] = {0};
+ wchar_t DrvNameEx[128]  = {0};
  wchar_t DPath[MAX_PATH] = {0};
  lstrcpyW(DrvNameEx, DrvName);    
  lstrcatW(DrvNameEx, L"Drv");      // The Driver service name must not be same as the loader service name
- int ResA = SaveDriverToFile(DrvName, IsRunOnWow64, DPath);    
+ int ResA = SaveDriverToFile(DrvName, IsRunOnWow64, DPath, DrvPath);    
  if((ResA < 0) || !*DPath){DBGMSG("No driver file: %u!",ResA); return false;}
  pro = new CBProcess();
  drv = new CDrvLoader();      // todo: drv name must not match srv name
- if(drv->Initialize(DrvNameEx, DPath) < 0){DBGMSG("Driver loader init failed: %ls - %ls",&DrvNameEx,&DPath); return false;}
- if(drv->LoadDriver() < 0){DBGMSG("Failed to load the driver: %ls - %ls",&DrvNameEx,&DPath); return false;}
+ if(drv->Initialize(DrvNameEx, DPath) < 0){DBGMSG("Driver loader init failed: %ls - %ls",&DrvNameEx,&DPath); DeleteDriverFile(); return false;}
+ if(drv->LoadDriver() < 0){DBGMSG("Failed to load the driver: %ls - %ls",&DrvNameEx,&DPath);DeleteDriverFile(); return false;}
+ DeleteDriverFile();
+                                             
  pro->Callback = UcbCallback;
  if(pro->Create(DrvNameEx) < 0){DBGMSG("Failed to connect to callback driver: %ls - %ls",&DrvNameEx,&DPath); return false;}
 
@@ -1239,9 +1256,9 @@ void _stdcall LoadConfiguration(void)
     }       
      else if(IsFilePathDelim(GlobalDllDir[GDirPathLen-1]))GlobalDllDir[GDirPathLen-1]=0;   // Must not end with a slash
 
-   wchar_t DrvPath[4] = {GlobalDllDir[0],':',0}; 
+   wchar_t DrPath[4] = {GlobalDllDir[0],':',0}; 
    wchar_t DDevPath[MAX_PATH];
-   if(DWORD PLen = QueryDosDeviceW(DrvPath,DDevPath,countof(DDevPath)))  // Returns number of stored char, not actual length of the string
+   if(DWORD PLen = QueryDosDeviceW(DrPath,DDevPath,countof(DDevPath)))  // Returns number of stored char, not actual length of the string
     {
      lstrcatW(DDevPath, &GlobalDllDir[2]);   // 'X:\Path' to '\Dev ice\HarddiskVolume1\Path'
      DDevPath[4] = '\\';    

@@ -183,5 +183,5 @@ bool _stdcall DoAppInitialization(void);
 void _stdcall LoadConfiguration(void);    
 int  _stdcall InitNtDllsHooks(void);   
 int _fastcall GenerateBinDrv(void);   
-int _fastcall SaveDriverToFile(PWSTR Name, bool IsX64, PWSTR FilePathOut);    
+int _fastcall SaveDriverToFile(PWSTR Name, bool IsX64, PWSTR FilePathOut, PWSTR NormPathOut);    
 //------------------------------------------------------------------------------------------------------------
