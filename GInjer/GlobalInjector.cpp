@@ -948,8 +948,7 @@ void _stdcall SysMain(DWORD UnkArg)
  DBGMSG("Starting Global Injector(%08X)...",GetCurrentThreadId());
  if(SetProcessPrivilegeState(true, SE_DEBUG_NAME, GetCurrentProcess()) < 0){DBGMSG("Failed to enable SeDebugPrivilege!");}
  if(SetProcessPrivilegeState(true, SE_CREATE_GLOBAL_NAME, GetCurrentProcess()) < 0){DBGMSG("Failed to enable SeCreateGlobalPrivilege!");}    // For sharing a mutex with a service 
-         
-                                   
+                                
 // GenerateBinLdr();    // <<<<<<<<<<<<<<<< Generate Loader array (Build with /Ox and /Ob2)
 // GenerateBinDrv();    // <<<<<<<<<<<<<<<< No driver binaries in github repository!
 #ifdef TESTRUN
@@ -1140,7 +1139,7 @@ int _stdcall InitNtDllsHooks(void)
 }
 //------------------------------------------------------------------------------------------------------------
 bool _stdcall DeleteDriverFile(void)
-{
+{      
  if(!*DrvPath)return true;
  Wow64EnableWow64FsRedirection(FALSE);  // In case the driver has been saved to 'system32\drivers\' directory
  BOOL err = DeleteFileW(DrvPath);
@@ -1172,6 +1171,33 @@ bool _stdcall DoAppFinalization(void)
  return (ErrCtr <= 0);
 }
 //------------------------------------------------------------------------------------------------------------
+int _stdcall LoadCallbacDriver(PWSTR DrvName, PWSTR DrvNameEx, PWSTR DPath)
+{
+ bool DrvSha256 = (GetRealVersionInfo() & 0xFF) > 8;     // Windows 8
+   
+ int ResA = SaveDriverToFile(DrvName, IsRunOnWow64, DPath, DrvPath, DrvSha256);    
+ if((ResA < 0) || !*DPath){DBGMSG("No driver file: %u!",ResA); return -1;}
+ pro = new CBProcess();       // Tese two will be freed by DoAppFinalization
+ drv = new CDrvLoader();      // todo: drv name must not match srv name
+ if(drv->Initialize(DrvNameEx, DPath) < 0){DBGMSG("Driver loader init failed: %ls - %ls",DrvNameEx,DPath); DeleteDriverFile(); return -2;}
+ int res = drv->LoadDriver();
+ if(res < 0)
+  {
+   if((DWORD)res == 0xC0000428)   // Signature verification failed
+    {
+     DBGMSG("Trying a second driver: DrvSha256=%u",(int)DrvSha256);
+     DeleteDriverFile(); 
+     int ResA = SaveDriverToFile(DrvName, IsRunOnWow64, DPath, DrvPath, !DrvSha256);    
+     if((ResA < 0) || !*DPath){DBGMSG("No second driver file: %u!",ResA); return -1;}
+     if(drv->Initialize(DrvNameEx, DPath) < 0){DBGMSG("Driver loader init failed: %ls - %ls",DrvNameEx,DPath); DeleteDriverFile(); return -2;}
+     res = drv->LoadDriver();
+    }
+   if(res < 0){DBGMSG("Failed to load the driver: %ls - %ls",DrvNameEx,DPath);DeleteDriverFile(); return -3;}
+  }
+ DeleteDriverFile();
+ return 0;
+}
+//------------------------------------------------------------------------------------------------------------
 bool _stdcall DoAppInitialization(void)
 {                  
  DBGMSG("Initializing...");
@@ -1198,14 +1224,8 @@ bool _stdcall DoAppInitialization(void)
  wchar_t DPath[MAX_PATH] = {0};
  lstrcpyW(DrvNameEx, DrvName);    
  lstrcatW(DrvNameEx, L"Drv");      // The Driver service name must not be same as the loader service name
- int ResA = SaveDriverToFile(DrvName, IsRunOnWow64, DPath, DrvPath);    
- if((ResA < 0) || !*DPath){DBGMSG("No driver file: %u!",ResA); return false;}
- pro = new CBProcess();
- drv = new CDrvLoader();      // todo: drv name must not match srv name
- if(drv->Initialize(DrvNameEx, DPath) < 0){DBGMSG("Driver loader init failed: %ls - %ls",&DrvNameEx,&DPath); DeleteDriverFile(); return false;}
- if(drv->LoadDriver() < 0){DBGMSG("Failed to load the driver: %ls - %ls",&DrvNameEx,&DPath);DeleteDriverFile(); return false;}
- DeleteDriverFile();
-                                             
+
+ if(LoadCallbacDriver(DrvName, DrvNameEx, DPath) < 0){DBGMSG("Failed to load the driver!"); return false;}                                            
  pro->Callback = UcbCallback;
  if(pro->Create(DrvNameEx) < 0){DBGMSG("Failed to connect to callback driver: %ls - %ls",&DrvNameEx,&DPath); return false;}
 

