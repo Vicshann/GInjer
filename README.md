@@ -16,6 +16,11 @@
 + *No any of target Process` threads handle is opened*
 + *No PROCESS_VM_READ or PROCESS_VM_WRITE rights are required for the target process` handle*     
 ---
+# Command Line
+Install as a service: -I
+
+Uninstall the service: -U
+
 # Load Configuration
 
 **Defined in INI file**
