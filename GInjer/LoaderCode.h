@@ -35,7 +35,7 @@
 
 enum EModFlags {         
 // Stored in PE header (Major version)
-       mfPresent    = 0x0001,      // Marks that the module is supported (should it always be set?)
+       mfSameName   = 0x0001,      // Module`s name must match with exe`s name (Useful when loading from !ldrg/!ldrl directory)
        mfReflLoad   = 0x0002,      // else mfLoaderLoad
        mfLocalPath  = 0x0004,      // else mfGlobalPath
        mfModXAny    = 0x0008,      // else mfModNative

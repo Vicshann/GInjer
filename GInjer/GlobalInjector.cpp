@@ -23,6 +23,7 @@ bool ForceTgtCon     = false; // Force a target process to display a Console for
 bool ReceiveDbgLog   = true;  // Receive debug messages from the loader and injected modules
 bool NormDllPaths    = true;  // Normalize paths from '\??\HarddiskVolumeX\' to 'C:\'
 bool DirectInject    = true;  // Inject right from the Callback Thread to avoid suspending of a target Process/Thread   (Disabled in InjectType=1 for a target under a debugger)
+bool DeepExeName     = false; // Search for exe named modules in all dirs up to root
 bool UseMainThread   = false; // Works only partially when DirectInject is enabled 
 UINT InjectType      = 0;     // 0-Inject by patching ntdll.dll; 1=Inject by remapping ntdll.dll
 UINT DrvTimeout   = CBProcess::DefTimeout; 
@@ -246,6 +247,7 @@ int _stdcall GetModulesFromDirectory(HANDLE hDir, DWORD BaseFlg, PWSTR DirRoot, 
 // ProcPath must be large enough to contain file name as its directory name + ext
 int _stdcall GetKnownModulesFromPath(PWSTR ProcPath, CModPathArr* ModArr, int PathLenChr=0)    // Contents of 'Path' buffer will be corrupted 
 {
+ wchar_t ProcName[MAX_PATH];    // Is enough?
  CWStrBuf PathBuf;
  int TotalCtr = 0;
  if(!ProcPath)return 0;
@@ -261,36 +263,40 @@ int _stdcall GetKnownModulesFromPath(PWSTR ProcPath, CModPathArr* ModArr, int Pa
  UINT  FNamBufLen  = 0x10000; // 64k (~120 modules)
  PVOID FNameBuf    = NULL;
  DWORD ProcessRoot = mfModOnRoot;
- for(int PathLenLeft=PathLenChr;PathLenLeft > BaseOffsetChr;PathLenLeft = PathStepBack(Path, PathLenLeft))
+ PWSTR ProcNameFirst = GetFileName(Path);  // Temporary!
+ if(ProcNameFirst != Path)lstrcpynW(ProcName, ProcNameFirst, countof(ProcName));       // If path passed with a Process name  (Directories passed as 'Directory\\')  
+   else ProcNameFirst - NULL;
+ for(int PathLenLeft=PathLenChr;PathLenLeft >= BaseOffsetChr;PathLenLeft = PathStepBack(Path, PathLenLeft))   // '>=' include root dir, '>' - no root dir
   {  
-   if((PathLenLeft == PathLenChr)&&(Path[PathLenLeft-1]!='/')&&(Path[PathLenLeft-1]!='\\'))  // Initial path with a Process name
+   bool NFirst = (PathLenLeft == PathLenChr)&&(Path[PathLenLeft-1]!='/')&&(Path[PathLenLeft-1]!='\\');    // Initial path with a Process name
+   if((NFirst || DeepExeName) && ProcNameFirst) 
     {
-     PWSTR FNam = GetFileName(Path);
-     if(FNam != Path)     // If path passed with a Process name  (Directories passed as 'Directory\\')
+     int Offset = PathLenLeft;
+     if(!NFirst)Offset += NSTR::StrCopy(&Path[Offset], ProcName);
+     for(int ctr=0;ctr < ModuleNamesCnt;ctr++)    // Check modules with a target process` name
       {
-       for(int ctr=0;ctr < ModuleNamesCnt;ctr++)    // Check modules with name as containing directory
+       HANDLE HVal = NULL;
+       UINT   PLen = Offset + ModuleExts[ctr].ExtLen;
+       lstrcpyW(&Path[Offset], ModuleExts[ctr].ExtVal);
+       if(OpenFileOrDirectory(Path, false, &HVal, PLen) >= 0)
         {
-         HANDLE HVal = NULL;
-         UINT   PLen = PathLenLeft + ModuleExts[ctr].ExtLen;
-         lstrcpyW(&Path[PathLenLeft], ModuleExts[ctr].ExtVal);
-         if(OpenFileOrDirectory(Path, false, &HVal, PLen) >= 0)
+         TotalCtr++; 
+         if(ModArr)
           {
-           TotalCtr++; 
-           if(ModArr)
-            {
-             SPathHandleDescr* Obj = ModArr->Add(NULL);
-             Obj->Flags  = ProcessRoot|ModuleExts[ctr].Flags;
-             Obj->hFSObj = HVal;
-             if(NormDllPaths)Obj->SetDosPathByHandle(Path, PLen); 
-               else  Obj->Path.Assign(Path, PLen)[PLen] = 0;    // No terminating 0
-            }
-             else if(HVal)CloseHandle(HVal);
+           SPathHandleDescr* Obj = ModArr->Add(NULL);
+           Obj->Flags  = ProcessRoot|ModuleExts[ctr].Flags;
+           Obj->hFSObj = HVal;
+           if(NormDllPaths)Obj->SetDosPathByHandle(Path, PLen); 
+             else  Obj->Path.Assign(Path, PLen)[PLen] = 0;    // No terminating 0
           }
+           else if(HVal)CloseHandle(HVal);
         }
-       PathLenLeft = (FNam - Path);
       }
+     if(NFirst)PathLenLeft = (ProcNameFirst - Path);   // Without a process name now  
     }
    
+   if(PathLenLeft > BaseOffsetChr)  // Root dir have no name (Only !ldrg or !ldrl will be searched on root)
+   {
    int DEndPos = PathLenLeft-2;    // To point to a last char of a dir name
    while((DEndPos >= BaseOffsetChr)&&(Path[DEndPos]!='/')&&(Path[DEndPos]!='\\'))DEndPos--;  // Until dir name begin
    int DirNameLen = PathLenLeft-(++DEndPos+1); 
@@ -314,6 +320,7 @@ int _stdcall GetKnownModulesFromPath(PWSTR ProcPath, CModPathArr* ModArr, int Pa
          else if(HVal)CloseHandle(HVal);
       }
     }
+   }
 
    for(int ctr=0;ctr < LdrDirNamesCnt;ctr++)   // Check Directories
     {
@@ -352,13 +359,27 @@ int _stdcall GetKnownModulesFromPath(PWSTR ProcPath, CModPathArr* ModArr, int Pa
  return TotalCtr;
 }
 //------------------------------------------------------------------------------------------------------------
-int __stdcall GatherModuleInfoAndFlags(CModPathArr* ModArr, DWORD* RequiredMem, bool IsTgtWow64, bool IsSysX64)    
+bool _fastcall IsModNameMatchProcessName(PWSTR ProcName, CWStrBuf* ModName)
+{
+ DBGMSG("ProcName=%ls, ModName=%ls", ProcName, ModName->c_data());
+ PWSTR MExt = GetFileExt(ModName->c_data(), ModName->Count()); 
+ if(!*MExt)return false;  // No Ext!
+ PWSTR FNam = GetFileName(ModName->c_data(), ModName->Count()); 
+ if(FNam == ModName->c_data())return false;  // No Name!
+ int Len = (--MExt - FNam);
+ DBGMSG("Len=%i, ProcName=%ls, FNam=%ls", Len, ProcName, FNam);
+ if(Len < 0)return false;  // No Ext!
+ return NSTR::IsStrEqualIC(ProcName, FNam, Len);
+}
+//------------------------------------------------------------------------------------------------------------
+int __stdcall GatherModuleInfoAndFlags(SInjProcDesc* Desc, CModPathArr* ModArr, DWORD* RequiredMem, bool IsTgtWow64, bool IsSysX64)    
 {
  UINT TotalX32 = 0;
  UINT TotalX64 = 0;
  BYTE Buffer[0x400];
 
- *RequiredMem = sizeof(SBlkDesc);
+ *RequiredMem   = sizeof(SBlkDesc);
+ PWSTR ProcName = GetFileName(Desc->ProcPath.c_data(), Desc->ProcPath.Count());
  for(int ctr=0,tot=ModArr->Count();ctr < tot;ctr++)
   {
    SPathHandleDescr* Obj = ModArr->Get(ctr);
@@ -368,13 +389,14 @@ int __stdcall GatherModuleInfoAndFlags(CModPathArr* ModArr, DWORD* RequiredMem, 
    if(!ReadFile(Obj->hFSObj, &Buffer, sizeof(Buffer), &Result, NULL) || (sizeof(Buffer) != Result)){CloseHandle(Obj->hFSObj); Obj->hFSObj=NULL; Obj->Flags=0; continue;};
    DOS_HEADER *DosHdr = (DOS_HEADER*)&Buffer;
    WIN_HEADER<PECURRENT> *WinHdr = (WIN_HEADER<PECURRENT>*)&(((BYTE*)DosHdr)[DosHdr->OffsetHeaderPE]);
-   Obj->Flags |= WinHdr->OptionalHeader.MajImageVer | mfPresent;
+   Obj->Flags |= WinHdr->OptionalHeader.MajImageVer;
    Obj->Flags &= ~(mfModuleX32|mfModuleX64);
    Obj->Flags |= (WinHdr->OptionalHeader.Magic == 0x020B)?mfModuleX64:mfModuleX32;   
    if(
        ((Obj->Flags & mfLocalPath) && !(Obj->Flags & mfModOnRoot)) ||                   // This module need to be loaded only from initial dir
        (!IsSysX64  && (Obj->Flags & mfModuleX64)) ||                                    // Impossible :)
-       (IsTgtWow64 && (Obj->Flags & mfModuleX64) && !(Obj->Flags & mfModXAny))          // Do not load a X64 module into WOW64 process if it is not marked as mfModXAny
+       (IsTgtWow64 && (Obj->Flags & mfModuleX64) && !(Obj->Flags & mfModXAny)) ||       // Do not load a X64 module into WOW64 process if it is not marked as mfModXAny
+       ((Obj->Flags & mfSameName) && !IsModNameMatchProcessName(ProcName, &Obj->Path))  // This module must have matching name with a target process
      ) 
        {CloseHandle(Obj->hFSObj); Obj->hFSObj=NULL; Obj->Flags=0; DBGMSG("Module skipped: Flags=%08X, Path=%ls", Obj->Flags, Obj->Path.c_data()); continue;};      // Close and invalidate this module
                                                                              
@@ -620,7 +642,7 @@ int _stdcall TryInjectProcess(SInjProcDesc* Desc)
 //  {
    if(!IsWow64Process(Desc->hProcess, &IsTargetWow64)){DBGMSG("Unknown process type!"); return -1;}
    if((GetKnownModulesFromPath(Desc->ProcPath.c_data(), &Array, Desc->ProcPath.Count()) <= 0) || !Array.Count()){DBGMSG("No modules to inject on the Process path"); return -1;}    // '\\??\\HarddiskVolume6\\'
-   if(GatherModuleInfoAndFlags(&Array, &RequiredMem, IsTargetWow64, IsRunOnWow64) <= 0){DBGMSG("No modules to inject into the process"); return -2;} 
+   if(GatherModuleInfoAndFlags(Desc, &Array, &RequiredMem, IsTargetWow64, IsRunOnWow64) <= 0){DBGMSG("No modules to inject into the process"); return -2;} 
    DBGMSG("Required Memory: %08X", RequiredMem);                      
    PVOID  SecLocAddr  = NULL; 
    UINT64 SecRemAddr  = NULL;
@@ -1247,7 +1269,8 @@ void _stdcall LoadConfiguration(void)
  NormDllPaths = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"NormDllPaths",NormDllPaths,(PWSTR)&IniFilePath);
  ForceTgtCon = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"ForceTgtCon",ForceTgtCon,(PWSTR)&IniFilePath); 
  ReceiveDbgLog = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"ReceiveDbgLog",ReceiveDbgLog,(PWSTR)&IniFilePath);            
- UseMainThread = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"UseMainThread",UseMainThread,(PWSTR)&IniFilePath);             
+ UseMainThread = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"UseMainThread",UseMainThread,(PWSTR)&IniFilePath);  
+ DeepExeName = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"DeepExeName",DeepExeName,(PWSTR)&IniFilePath);
  DirectInject = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"DirectInject",DirectInject,(PWSTR)&IniFilePath);
  InjectType = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"InjectType",InjectType,(PWSTR)&IniFilePath);             
  DrvTimeout = INIRefreshValueInt<PWSTR>(CFGSECNAME,L"DrvTimeout",DrvTimeout,(PWSTR)&IniFilePath);
