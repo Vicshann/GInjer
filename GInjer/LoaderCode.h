@@ -14,11 +14,9 @@
   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
 */
 
-
-#include <Windows.h>
-
+#include "Common.hpp"
 //===========================================================================================================
-#define ModDescFromCurTh() ((NtCurrentTeb()->LastErrorValue > 0xFFFF)?((SModDesc*)NtCurrentTeb()->LastErrorValue):(NULL)) 
+#define ModDescFromCurTh() ((NtCurrentTeb()->LastErrorValue > 0xFFFF)?((SModDesc*)SIZE_T(NtCurrentTeb()->LastErrorValue)):(NULL))       // Should not be permanent?
 #define AddrToBlkDesc(addr) ((SBlkDesc*)(((SIZE_T)(addr)) & ~((SIZE_T)0xFFFF)))
 #define GetCurLdrDesc(blkBase) ((blkBase)?((4 == sizeof(PVOID))?(&((SBlkDesc*)blkBase)->LdrDesc32):(&((SBlkDesc*)blkBase)->LdrDesc64)):(NULL))
 #define LDR_STRUCT_ALIGN     16            // For InjLdr::RemThModMarker
@@ -111,7 +109,7 @@ struct SBlkDesc
 
 #pragma pack(pop)
 //---------------------------------------------------------------------------
-static void   _cdecl MsgLogToLdr(char* ProcName, char* MsgFmt, ...)
+static void   _cdecl MsgLogToLdr(char* ProcName, char* MsgFmt, ...)   // PEB->SubSystemData may be used to point to some memory instead of statics but this can be detected
 {
  static HANDLE hLogOutA; 
  static HANDLE hLogOutB;
@@ -139,8 +137,8 @@ static void   _cdecl MsgLogToLdr(char* ProcName, char* MsgFmt, ...)
    if(!LdrDesc->NtDllBase || (!BlkDesc->hDbgLogOutA && !BlkDesc->hDbgLogOutB))return;
    hLogOutA = (HANDLE)BlkDesc->hDbgLogOutA;
    hLogOutB = (HANDLE)BlkDesc->hDbgLogOutB;
-   *(PVOID*)&pVSprintf    = TGetProcedureAddress<PECURRENT>((PBYTE)LdrDesc->NtDllBase, "vsprintf");
-   *(PVOID*)&pNtWriteFile = TGetProcedureAddress<PECURRENT>((PBYTE)LdrDesc->NtDllBase, "NtWriteFile");
+   *(PVOID*)&pVSprintf    = NPEFMT::TGetProcedureAddress<NCMN::NPEFMT::PECURRENT>((PBYTE)LdrDesc->NtDllBase, "vsprintf");
+   *(PVOID*)&pNtWriteFile = NPEFMT::TGetProcedureAddress<NCMN::NPEFMT::PECURRENT>((PBYTE)LdrDesc->NtDllBase, "NtWriteFile");   // TODO: Should be able to log even if relocs is not fixed yet
    return;
   }
  if(!hLogOutA && !hLogOutB)return;

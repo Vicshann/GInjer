@@ -210,7 +210,7 @@ _declspec(noinline) PVOID _stdcall DoTheJob(CONTEXT*& NewThCtx, PBYTE& NtDllBase
 NTSTATUS NTAPI ProcLdrLoadDll(PCWSTR DllPath, PULONG DllCharacteristics, PUNICODE_STRING DllName, PVOID* DllHandle)
 {  
  DBGPRNT("DllName: %ls",(DllName && DllName->Buffer)?(DllName->Buffer):(NULL));                
- SLdrDesc* LdrDesc = GetLdrDesc(sizeof(PVOID)); 
+ SLdrDesc*  LdrDesc = GetLdrDesc(sizeof(PVOID)); 
  SNtDllProcs* NtDll = (SNtDllProcs*)LdrDesc->PNtDllProcs;
  UnpatchNtDll(LdrDesc, NtDll);
  NTSTATUS res  = NtDll->pLdrLoadDll(DllPath, DllCharacteristics, DllName, DllHandle);    // Load the system dll first
@@ -295,7 +295,7 @@ _declspec(noinline) void _fastcall LoadModulesNormal(SLdrDesc* Desc, SNtDllProcs
    DBGPRNT("Loading %08X: %ls",Mod->Flags,uni.Buffer);
    Mod->Flags |= mfModLoaded;      // Do not try to load it again
    NtCurrentTeb()->LastErrorValue = (DWORD)Mod;
-   NTSTATUS res = NtDll->pLdrLoadDll(NULL, 0, &uni, &hLib);
+   NTSTATUS res = NtDll->pLdrLoadDll(NULL, 0, &uni, &hLib);    // All arguments to DllMain is from Loader
    DBGPRNT("res=%08X, Handle=%p",res,hLib);
   }
  DBGPRNT("Done");
@@ -328,15 +328,15 @@ _declspec(noinline) void _fastcall LoadModulesReflective(SLdrDesc* Desc, SNtDllP
   {
    if(!(Mod->Flags & mfReflLoad))continue;
    if((Mod->Flags & Flags) != Flags)continue;
-   if(!Mod->ModEPOffs){DBGPRNT("No EP for module: %ls",&Mod->ModulePath);}
+   if(!Mod->ModEPOffs){DBGPRNT("No EP for module: %ls",&Mod->ModulePath); continue;}       // continue or GetRawDllEntry?
    PVOID EPAddr = (PVOID)(Mod->ModuleBase + Mod->ModEPOffs);          // GetRawDllEntry((PBYTE)Mod->ModuleBase);
-   DBGPRNT("Loading %08X %08X: %ls",Mod->Flags,EPAddr,&Mod->ModulePath); 
+   DBGPRNT("Loading %08X %p: %ls",Mod->Flags,EPAddr,&Mod->ModulePath);    // NOTE: No WideString convertions on BeforeLoader mode: LdrpInitializeNlsInfo is not called yet
    Mod->Flags |= mfModLoaded;      // Do not try to load it again
    NtCurrentTeb()->LastErrorValue = (DWORD)Mod;
-   BOOL res = ((BOOL (APIENTRY*)(HMODULE, DWORD, LPVOID))EPAddr)((HMODULE)Mod->ModuleBase, DLL_REFLECTIVE_LOAD, Mod);
+   BOOL res = ((BOOL (APIENTRY*)(HMODULE, DWORD, LPVOID))EPAddr)((HMODULE)Mod->ModuleBase, DLL_REFLECTIVE_LOAD, Mod);   // Arguments to DllMain is for ReflectiveLoad
    DBGPRNT("res=%08X",res);
   }
-  DBGPRNT("Done");
+ DBGPRNT("Done");
 }
 //---------------------------------------------------------------------------
 _declspec(noinline) void _fastcall DoLoadModules(SLdrDesc* Desc, SNtDllProcs* NtDll, DWORD Flags)
