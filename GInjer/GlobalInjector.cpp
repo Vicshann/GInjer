@@ -88,30 +88,30 @@ wchar_t  GlobalDllDir[MAX_PATH];
 //============================================================================================================
 template <typename T> int _stdcall GetMainThreadInfo(DWORD ProcessId, DWORD* ThreadIdOut, UINT64* ThreadTebOut)
 {
- SWOW64Ext::SYSTEM_PROCESS_INFORMATION<T>* pSysProcInf = NULL;
+ NWOW64E::SYSTEM_PROCESS_INFORMATION<T>* pSysProcInf = NULL;
  DWORD DataSize = 0;
  for(DWORD BufSize=1024*1024;;BufSize *= 2)
   {
    if(pSysProcInf)VirtualFree(pSysProcInf, 0, MEM_RELEASE);
-   pSysProcInf  = (SWOW64Ext::SYSTEM_PROCESS_INFORMATION<T>*)VirtualAlloc(NULL, BufSize, MEM_COMMIT, PAGE_READWRITE);
+   pSysProcInf  = (NWOW64E::SYSTEM_PROCESS_INFORMATION<T>*)VirtualAlloc(NULL, BufSize, MEM_COMMIT, PAGE_READWRITE);
    if(!pSysProcInf)return -1;
    NTSTATUS res = 0;
-   if(sizeof(T) > sizeof(DWORD))res = SWOW64Ext::QuerySystemInformation(SystemExtendedProcessInformation, pSysProcInf, BufSize, &DataSize);  // Note: This process is WOW64. Normal NtQuerySystemInformation returns truncated pointers
+   if(sizeof(T) > sizeof(DWORD))res = NWOW64E::QuerySystemInformation(SystemExtendedProcessInformation, pSysProcInf, BufSize, &DataSize);  // Note: This process is WOW64. Normal NtQuerySystemInformation returns truncated pointers
      else res = NtQuerySystemInformation(SystemProcessInformation, pSysProcInf, BufSize, &DataSize);   // NOTE: Rereading everything again is not fast
    if(STATUS_SUCCESS == res)break;
    if(res != STATUS_INFO_LENGTH_MISMATCH){DBGMSG("QuerySystemInformation failed: %08X",res); return -2;}    
   }
- SWOW64Ext::SYSTEM_EXTENDED_THREAD_INFORMATION<T>* LastThread = NULL;
- for(SWOW64Ext::SYSTEM_PROCESS_INFORMATION<T>* pCurProc = pSysProcInf;;pCurProc = (SWOW64Ext::SYSTEM_PROCESS_INFORMATION<T>*)((PBYTE)pCurProc + pCurProc->NextEntryOffset))
+ NWOW64E::SYSTEM_EXTENDED_THREAD_INFORMATION<T>* LastThread = NULL;
+ for(NWOW64E::SYSTEM_PROCESS_INFORMATION<T>* pCurProc = pSysProcInf;;pCurProc = (NWOW64E::SYSTEM_PROCESS_INFORMATION<T>*)((PBYTE)pCurProc + pCurProc->NextEntryOffset))
   {       
    DBGMSG("Process: ID=%08X, Name=%ls",(DWORD)pCurProc->UniqueProcessId, ((PVOID)pCurProc->ImageName.Buffer)?((PVOID)pCurProc->ImageName.Buffer):(L""));
    if((DWORD)pCurProc->UniqueProcessId == ProcessId)
     {
-     SWOW64Ext::SYSTEM_EXTENDED_THREAD_INFORMATION<T>* Threads = (SWOW64Ext::SYSTEM_EXTENDED_THREAD_INFORMATION<T>*)&pCurProc->Threads;
+     NWOW64E::SYSTEM_EXTENDED_THREAD_INFORMATION<T>* Threads = (NWOW64E::SYSTEM_EXTENDED_THREAD_INFORMATION<T>*)&pCurProc->Threads;
      if(pCurProc->NumberOfThreads)LastThread = &Threads[0];
 	 for(UINT idx=0;idx < pCurProc->NumberOfThreads;idx++)       // First in the list is always a first thread of a process?
       {
-       SWOW64Ext::SYSTEM_EXTENDED_THREAD_INFORMATION<T>* CurThread = &Threads[idx];
+       NWOW64E::SYSTEM_EXTENDED_THREAD_INFORMATION<T>* CurThread = &Threads[idx];
        UINT64 TebAddr   = CurThread->TebBase;
        UINT64 Win32Addr = CurThread->Win32StartAddress;
        UINT64 StartAddr = CurThread->ThreadInfo.StartAddress;    // RtlUserThreadStart
@@ -216,7 +216,7 @@ int _stdcall GetModulesFromDirectory(HANDLE hDir, DWORD BaseFlg, PWSTR DirRoot, 
     {
      UINT FNameLenChr = FNameRec->FileNameLength/sizeof(WCHAR);
      PWSTR FExt = GetFileExt(FNameRec->FileName, FNameLenChr);
-     for(int ctr=0;ctr < ModuleNamesCnt;ctr++)    // Check modules with name as containing directory
+     for(int ctr=0;ctr < ModuleNamesCnt;ctr++)    // Check modules with name as a containing directory
       {
        if(!NSTR::IsStrEqualIC(FExt, &ModuleExts[ctr].ExtVal[1], ModuleExts[ctr].ExtLen-1))continue;      
        SPathHandleDescr Obj;
@@ -265,7 +265,7 @@ int _stdcall GetKnownModulesFromPath(PWSTR ProcPath, CModPathArr* ModArr, int Pa
  DWORD ProcessRoot = mfModOnRoot;
  PWSTR ProcNameFirst = GetFileName(Path);  // Temporary!
  if(ProcNameFirst != Path)lstrcpynW(ProcName, ProcNameFirst, countof(ProcName));       // If path passed with a Process name  (Directories passed as 'Directory\\')  
-   else ProcNameFirst - NULL;
+   else ProcNameFirst = NULL;
  for(int PathLenLeft=PathLenChr;PathLenLeft >= BaseOffsetChr;PathLenLeft = PathStepBack(Path, PathLenLeft))   // '>=' include root dir, '>' - no root dir
   {  
    bool NFirst = (PathLenLeft == PathLenChr)&&(Path[PathLenLeft-1]!='/')&&(Path[PathLenLeft-1]!='\\');    // Initial path with a Process name
@@ -387,8 +387,8 @@ int __stdcall GatherModuleInfoAndFlags(SInjProcDesc* Desc, CModPathArr* ModArr, 
    DWORD Result;
    SetFilePointer(Obj->hFSObj,0,NULL,FILE_BEGIN);
    if(!ReadFile(Obj->hFSObj, &Buffer, sizeof(Buffer), &Result, NULL) || (sizeof(Buffer) != Result)){CloseHandle(Obj->hFSObj); Obj->hFSObj=NULL; Obj->Flags=0; continue;};
-   DOS_HEADER *DosHdr = (DOS_HEADER*)&Buffer;
-   WIN_HEADER<PECURRENT> *WinHdr = (WIN_HEADER<PECURRENT>*)&(((BYTE*)DosHdr)[DosHdr->OffsetHeaderPE]);
+   NPEFMT::DOS_HEADER *DosHdr = (NPEFMT::DOS_HEADER*)&Buffer;
+   NPEFMT::WIN_HEADER<NPEFMT::PECURRENT> *WinHdr = (NPEFMT::WIN_HEADER<NPEFMT::PECURRENT>*)&(((BYTE*)DosHdr)[DosHdr->OffsetHeaderPE]);
    Obj->Flags |= WinHdr->OptionalHeader.MajImageVer;
    Obj->Flags &= ~(mfModuleX32|mfModuleX64);
    Obj->Flags |= (WinHdr->OptionalHeader.Magic == 0x020B)?mfModuleX64:mfModuleX32;   
@@ -400,8 +400,8 @@ int __stdcall GatherModuleInfoAndFlags(SInjProcDesc* Desc, CModPathArr* ModArr, 
      ) 
        {CloseHandle(Obj->hFSObj); Obj->hFSObj=NULL; Obj->Flags=0; DBGMSG("Module skipped: Flags=%08X, Path=%ls", Obj->Flags, Obj->Path.c_data()); continue;};      // Close and invalidate this module
                                                                              
-   *RequiredMem = AlignP2Frwd(*RequiredMem + ((Obj->Path.Count()+1)*sizeof(WCHAR)) + sizeof(SModDesc),LDR_STRUCT_ALIGN);                                   
-   if(Obj->Flags & mfReflLoad)*RequiredMem = AlignP2Frwd(*RequiredMem + GetFileSize(Obj->hFSObj, NULL),LDR_STRUCT_ALIGN);    
+   *RequiredMem = NCMN::AlignP2Frwd(*RequiredMem + ((Obj->Path.Count()+1)*sizeof(WCHAR)) + sizeof(SModDesc),LDR_STRUCT_ALIGN);                                   
+   if(Obj->Flags & mfReflLoad)*RequiredMem = NCMN::AlignP2Frwd(*RequiredMem + GetFileSize(Obj->hFSObj, NULL),LDR_STRUCT_ALIGN);    
    if(Obj->Flags & mfModuleX32)TotalX32++;
    if(Obj->Flags & mfModuleX64)TotalX64++;                
    DBGMSG("Module ready: Flags=%08X, Path=%ls", Obj->Flags, Obj->Path.c_data());
@@ -409,8 +409,8 @@ int __stdcall GatherModuleInfoAndFlags(SInjProcDesc* Desc, CModPathArr* ModArr, 
 
  bool PresentX32 = (!IsRunOnWow64 || IsTgtWow64) && TotalX32;
  bool PresentX64 = IsRunOnWow64 && (TotalX64 || TotalX32);   // On x64 system it always starts in x64 ntdll.dll
- if(PresentX32)*RequiredMem = AlignP2Frwd(*RequiredMem + SizeLoader32(),LDR_STRUCT_ALIGN);
- if(PresentX64)*RequiredMem = AlignP2Frwd(*RequiredMem + SizeLoader64(),LDR_STRUCT_ALIGN);
+ if(PresentX32)*RequiredMem = NCMN::AlignP2Frwd(*RequiredMem + SizeLoader32(),LDR_STRUCT_ALIGN);
+ if(PresentX64)*RequiredMem = NCMN::AlignP2Frwd(*RequiredMem + SizeLoader64(),LDR_STRUCT_ALIGN);
  DBGMSG("Modules to inject: TotalX32=%u, TotalX64=%u", TotalX32, TotalX64);
  return TotalX32+TotalX64;
 }
@@ -431,7 +431,7 @@ int _stdcall CreateSharedSecView(HANDLE hTgtProcess, UINT64 RemoteAddr, UINT Siz
   {
    DWORD64 ViewLen = 0;
    *SecRemAddr = RemoteAddr;
-   stat = SWOW64Ext::MapViewOfSection(hSec, hTgtProcess, SecRemAddr, 0, 0, NULL, &ViewLen, ViewUnmap, 0, PAGE_EXECUTE_READWRITE);  
+   stat = NWOW64E::MapViewOfSection(hSec, hTgtProcess, SecRemAddr, 0, 0, NULL, &ViewLen, ViewUnmap, 0, PAGE_EXECUTE_READWRITE);  
   }
    else         // Need any address(within 2 GB) or the system is native x32
    {
@@ -471,7 +471,7 @@ SBlkDesc* _stdcall WriteSharedData(CModPathArr* ModArr, PBYTE Addr, long Size, U
    ReadLoader32(&Addr[DataOffset], LdrSize);
    Desc->LdrDesc32.LdrProcAddr = RemoteAddr + DataOffset;
    DBGMSG("Added x32 loader code: %08X, %08X",(DWORD)(RemoteAddr+DataOffset),LdrSize);
-   DataOffset = AlignP2Frwd(DataOffset+LdrSize,LDR_STRUCT_ALIGN);  
+   DataOffset = NCMN::AlignP2Frwd(DataOffset+LdrSize,LDR_STRUCT_ALIGN);  
   }
  if(PresentX64)    
   { 
@@ -480,7 +480,7 @@ SBlkDesc* _stdcall WriteSharedData(CModPathArr* ModArr, PBYTE Addr, long Size, U
    ReadLoader64(&Addr[DataOffset], LdrSize);
    Desc->LdrDesc64.LdrProcAddr = RemoteAddr + DataOffset;   
    DBGMSG("Added x64 loader code: %08X, %08X",(DWORD)(RemoteAddr+DataOffset),LdrSize);
-   DataOffset = AlignP2Frwd(DataOffset+LdrSize,LDR_STRUCT_ALIGN);
+   DataOffset = NCMN::AlignP2Frwd(DataOffset+LdrSize,LDR_STRUCT_ALIGN);
   }
  if(PresentX32)    
   { 
@@ -507,22 +507,22 @@ SBlkDesc* _stdcall WriteSharedData(CModPathArr* ModArr, PBYTE Addr, long Size, U
   {
    SPathHandleDescr* Mod = ModArr->Get(ctr);
    if(!Mod->Flags || !Mod->hFSObj || !Mod->Path.Count()){DBGMSG("Module %u is not defined!",ctr); continue;}
-   UINT ModRecSize = AlignP2Frwd(sizeof(SModDesc) + ((Mod->Path.Count()+1) * sizeof(WCHAR)),LDR_STRUCT_ALIGN);    // Module body alignment
+   UINT ModRecSize = NCMN::AlignP2Frwd(sizeof(SModDesc) + ((Mod->Path.Count()+1) * sizeof(WCHAR)),LDR_STRUCT_ALIGN);    // Module body alignment
    SModDesc* Desc  = (SModDesc*)&Addr[DataOffset];
    if(Mod->Flags & mfReflLoad)
     {
      DWORD Result   = 0;
      DWORD FileSize = GetFileSize(Mod->hFSObj, NULL);
-     if(FileSize < sizeof(DOS_HEADER)){DBGMSG("Module %u is empty!",ctr); continue;}
+     if(FileSize < sizeof(NPEFMT::DOS_HEADER)){DBGMSG("Module %u is empty!",ctr); continue;}
      SetFilePointer(Mod->hFSObj,0,NULL,FILE_BEGIN);
      PBYTE PEMod = &Addr[DataOffset+ModRecSize];
      if(!ReadFile(Mod->hFSObj, PEMod, FileSize, &Result, NULL) || (FileSize != Result)){DBGMSG("Failed to read module %u: %u - %ls",ctr,GetLastError(),Mod->Path.c_data()); continue;};   
-     Desc->ModSize    = GetImageSize(PEMod);    
-     Desc->ModEPOffs  = GetModuleEntryOffset(PEMod, true);
+     Desc->ModSize    = NPEFMT::GetPEImageSize(PEMod);    
+     Desc->ModEPOffs  = NPEFMT::GetModuleEntryOffset(PEMod, true);
      Desc->ModRawSize = FileSize;
      Desc->ModuleBase = RemoteAddr + DataOffset + ModRecSize;
-     ModRecSize = AlignP2Frwd(ModRecSize+FileSize,LDR_STRUCT_ALIGN);  
-     InjLdr::EncryptModuleParts(PEMod, NULL, InjLdr::mfRawMod|fmCryHdr|fmCryImp|fmCryExp|fmCryRes);   // Code and data is not encrypted
+     ModRecSize = NCMN::AlignP2Frwd(ModRecSize+FileSize,LDR_STRUCT_ALIGN);  
+     NInjLdr::EncryptModuleParts(PEMod, NULL, NInjLdr::mfRawMod|NPEFMT::fmCryHdr|NPEFMT::fmCryImp|NPEFMT::fmCryExp|NPEFMT::fmCryRes);   // Code and data is not encrypted
      DBGMSG("Reflective Module EP=%08X: %ls",(DWORD)(Desc->ModuleBase+Desc->ModEPOffs),&Mod->Path.c_data()[4]); 
     }
      else Desc->ModuleBase = Desc->ModRawSize = Desc->ModEPOffs = Desc->ModSize = 0;   
@@ -551,7 +551,7 @@ int _stdcall SetHookOfNtDll(SBlkDesc* BlkHdr, SInjProcDesc* ProcDesc)
    DBGMSG("Remapping ntdll.dll");
    if(IsRunOnWow64)
     {                                                                    
-     NTSTATUS stat = SWOW64Ext::UnmapViewOfSection(ProcDesc->hProcess, NtDllInfo.NtDllBase64);
+     NTSTATUS stat = NWOW64E::UnmapViewOfSection(ProcDesc->hProcess, NtDllInfo.NtDllBase64);
      if(!stat)
       {
        PVOID  SecLocAddr = NULL; 
@@ -559,8 +559,8 @@ int _stdcall SetHookOfNtDll(SBlkDesc* BlkHdr, SInjProcDesc* ProcDesc)
        DBGMSG("NtDllBase=%08X%08X, NtDllSize=%08X", (DWORD)(NtDllInfo.NtDllBase64 >> 32), (DWORD)NtDllInfo.NtDllBase64, (DWORD)NtDllInfo.NtDllSize64);
        if(CreateSharedSecView(ProcDesc->hProcess, NtDllInfo.NtDllBase64, NtDllInfo.NtDllSize64, &SecLocAddr, &SecRemAddr) >= 0)
         {
-         SWOW64Ext::memcpy((UINT64)SecLocAddr, NtDllInfo.NtDllBase64, NtDllInfo.NtDllSize64);   // Copy NtDll.dll    // Is all pages readable?   // Do a separate function?
-         SWOW64Ext::memcpy((UINT64)SecLocAddr + NtDllInfo.OffsLdrpInitPatch64, (DWORD64)&Patch, sizeof(Patch));  
+         NWOW64E::memcpy((UINT64)SecLocAddr, NtDllInfo.NtDllBase64, NtDllInfo.NtDllSize64);   // Copy NtDll.dll    // Is all pages readable?   // Do a separate function?
+         NWOW64E::memcpy((UINT64)SecLocAddr + NtDllInfo.OffsLdrpInitPatch64, (DWORD64)&Patch, sizeof(Patch));  
          if(SecLocAddr)NtUnmapViewOfSection(GetCurrentProcess(), SecLocAddr);
          Remapped = true;
         }
@@ -593,10 +593,10 @@ int _stdcall SetHookOfNtDll(SBlkDesc* BlkHdr, SInjProcDesc* ProcDesc)
     {     
      DWORD64 RegionSize  = sizeof(SNtDllDesc::OrigLdrInitializeThunk64);
      DWORD64 BaseAddress = NtDllInfo.NtDllBase64 + NtDllInfo.OffsLdrpInitPatch64;
-     NTSTATUS stat = SWOW64Ext::ProtectVirtualMemory(ProcDesc->hProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &BlkHdr->LdrDesc64.OldProtLdrInitThunk);
+     NTSTATUS stat = NWOW64E::ProtectVirtualMemory(ProcDesc->hProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &BlkHdr->LdrDesc64.OldProtLdrInitThunk);
      if(stat){DBGMSG("ProtectVirtualMemory failed with %08X",stat); return -1;}  
      DWORD64 NumberOfBytesWritten = 0;
-     stat = SWOW64Ext::WriteVirtualMemory(ProcDesc->hProcess, NtDllInfo.NtDllBase64 + NtDllInfo.OffsLdrpInitPatch64, &Patch, sizeof(Patch), &NumberOfBytesWritten);   
+     stat = NWOW64E::WriteVirtualMemory(ProcDesc->hProcess, NtDllInfo.NtDllBase64 + NtDllInfo.OffsLdrpInitPatch64, &Patch, sizeof(Patch), &NumberOfBytesWritten);   
      if(stat){DBGMSG("WriteVirtualMemory failed with %08X",stat); return -2;}     // Restore protection?                           
     }
      else
@@ -771,9 +771,9 @@ DWORD __stdcall WorkerThreadProc(LPVOID lpThreadParameter)
      UINT64 UserParam = 0;
      if(IsRunOnWow64)        // A WOW64 thread is in x64 space here so on x64 system a real StartAddress is always in RCX
       {
-       SWOW64Ext::_CONTEXT64 ctx = {0};  
+       NWOW64E::_CONTEXT64 ctx = {0};  
        ctx.ContextFlags = CONTEXT64_INTEGER | CONTEXT64_CONTROL; 
-       NTSTATUS res = SWOW64Ext::GetContextThread(obj.hMainThread, &ctx);     
+       NTSTATUS res = NWOW64E::GetContextThread(obj.hMainThread, &ctx);     
        if(!res){StartAddr = ctx.Rcx; UserParam = ctx.Rdx; DBGMSG("RIP: %08X%08X, RCX: %08X%08X, RDX: %08X%08X", (DWORD)(ctx.Rip >> 32), (DWORD)ctx.Rip,  (DWORD)(ctx.Rcx >> 32), (DWORD)ctx.Rcx,   (DWORD)(ctx.Rdx >> 32), (DWORD)ctx.Rdx);}
         else {DBGMSG("GetContextThread failed: %08X",res);}
       }
@@ -992,7 +992,6 @@ void _stdcall SysMain(DWORD UnkArg)
  CmdLine = GetCmdLineParam(CmdLine, PWSTR(0));   // Skip EXE file name and path
  int ParCnt = -1;
  wchar_t Cmd[64];
- wchar_t Arg[MAX_PATH];
  while(*CmdLine)
   {
    DBGMSG("Parsing Arg: %ls",CmdLine);
@@ -1065,29 +1064,29 @@ int _stdcall InitNtDllsHooks(void)
  PVOID pKiIntSystemCall  = NULL;   // Windows 7 x32 or below
  PVOID pKiFastSystemCall = NULL;   // Windows 7 x32 or below
  NtDllInfo.NtDllBase32 = (UINT64)GetModuleHandleA("ntdll.dll");
- if(IsRunOnWow64)NtDllInfo.NtDllBase64 = SWOW64Ext::getNTDLL64();                    
+ if(IsRunOnWow64)NtDllInfo.NtDllBase64 = NWOW64E::getNTDLL64();                    
  DBGMSG("NtDll32Base=%p, NtDll64Base=%08X%08X",(PVOID)NtDllInfo.NtDllBase32,(DWORD)(NtDllInfo.NtDllBase64 >> 32), (DWORD)NtDllInfo.NtDllBase64);     
  if(!NtDllInfo.NtDllBase32 && !NtDllInfo.NtDllBase64)return -1;
 
  if(NtDllInfo.NtDllBase64)
   {
-   DOS_HEADER DosHdr;
-   WIN_HEADER<PETYPE64> WinHdr;
-   SWOW64Ext::memcpy((UINT64)&DosHdr, NtDllInfo.NtDllBase64, sizeof(DosHdr));
-   SWOW64Ext::memcpy((UINT64)&WinHdr, NtDllInfo.NtDllBase64+DosHdr.OffsetHeaderPE, sizeof(WinHdr));
+   NPEFMT::DOS_HEADER DosHdr;
+   NPEFMT::WIN_HEADER<NPEFMT::PETYPE64> WinHdr;
+   NWOW64E::memcpy((UINT64)&DosHdr, NtDllInfo.NtDllBase64, sizeof(DosHdr));
+   NWOW64E::memcpy((UINT64)&WinHdr, NtDllInfo.NtDllBase64+DosHdr.OffsetHeaderPE, sizeof(WinHdr));
    NtDllInfo.NtDllSize64 = WinHdr.OptionalHeader.SizeOfImage;
-   UINT64 Addr = SWOW64Ext::GetProcAddress64(NtDllInfo.NtDllBase64, "LdrInitializeThunk");
+   UINT64 Addr = NWOW64E::GetProcAddress64(NtDllInfo.NtDllBase64, "LdrInitializeThunk");
    NtDllInfo.OffsLdrInitializeThunk64 = Addr - NtDllInfo.NtDllBase64;
-   HDE64 dhde;
+   NCMN::NHDE::HDE64 dhde;
    BYTE TmpBuf[sizeof(NtDllInfo.OrigLdrInitializeThunk64)];
-   SWOW64Ext::memcpy((DWORD64)&TmpBuf, Addr, sizeof(TmpBuf));
+   NWOW64E::memcpy((DWORD64)&TmpBuf, Addr, sizeof(TmpBuf));
    for(UINT Offs=0;Offs < sizeof(TmpBuf);Offs += dhde.len)  
     {
      dhde.Disasm(&TmpBuf[Offs]);
      if((TmpBuf[Offs] == 0xE8)&&(dhde.len == 5))    // call rel  // LdrpInitialize
       {
        NtDllInfo.OffsLdrInitializeThunk64 = Addr - NtDllInfo.NtDllBase64;   
-       NtDllInfo.OffsLdrpInitialize64 = RelAddrToAddr<UINT64>(Addr+Offs, 5, *(long*)&TmpBuf[Offs+1]) - NtDllInfo.NtDllBase64;
+       NtDllInfo.OffsLdrpInitialize64 = NCMN::RelAddrToAddr<UINT64>(Addr+Offs, 5, *(long*)&TmpBuf[Offs+1]) - NtDllInfo.NtDllBase64;
        NtDllInfo.OffsLdrpInitRet64    = (Addr + Offs + 5) - NtDllInfo.NtDllBase64;
        NtDllInfo.OffsLdrpInitPatch64  = NtDllInfo.OffsLdrpInitRet64 - 5;
        memcpy(&NtDllInfo.OrigLdrInitializeThunk64, &TmpBuf, sizeof(NtDllInfo.OrigLdrInitializeThunk64));
@@ -1099,8 +1098,8 @@ int _stdcall InitNtDllsHooks(void)
 
  if(NtDllInfo.NtDllBase32)
   {   
-   DOS_HEADER* DosHdr           = (DOS_HEADER*)NtDllInfo.NtDllBase32;
-   WIN_HEADER<PETYPE32>* WinHdr = (WIN_HEADER<PETYPE32>*)&((PBYTE)NtDllInfo.NtDllBase32)[DosHdr->OffsetHeaderPE];
+   NPEFMT::DOS_HEADER* DosHdr           = (NPEFMT::DOS_HEADER*)NtDllInfo.NtDllBase32;
+   NPEFMT::WIN_HEADER<NPEFMT::PETYPE32>* WinHdr = (NPEFMT::WIN_HEADER<NPEFMT::PETYPE32>*)&((PBYTE)NtDllInfo.NtDllBase32)[DosHdr->OffsetHeaderPE];
    NtDllInfo.NtDllSize32 = WinHdr->OptionalHeader.SizeOfImage;
    if(!IsRunOnWow64)
     {
@@ -1109,7 +1108,7 @@ int _stdcall InitNtDllsHooks(void)
     }
    UINT64 Addr = (UINT64)GetProcAddress((HMODULE)NtDllInfo.NtDllBase32, "LdrInitializeThunk");
    NtDllInfo.OffsLdrInitializeThunk32 = Addr - NtDllInfo.NtDllBase32;
-   HDE32 dhde;
+   NCMN::NHDE::HDE32 dhde;
    BYTE TmpBuf[sizeof(NtDllInfo.OrigLdrInitializeThunk32)];
    memcpy(&TmpBuf, (PVOID)Addr, sizeof(TmpBuf));
    for(UINT Offs=0,PushCtr=0;Offs < sizeof(TmpBuf);Offs += dhde.len)   
@@ -1120,7 +1119,7 @@ int _stdcall InitNtDllsHooks(void)
       {
        if(PushCtr >= 2)NtDllInfo.IsX32LdrInitStdcall = true;
        NtDllInfo.OffsLdrInitializeThunk32 = Addr - NtDllInfo.NtDllBase32;   
-       NtDllInfo.OffsLdrpInitialize32 = RelAddrToAddr<DWORD>(Addr+Offs, 5, *(long*)&TmpBuf[Offs+1]) - (DWORD)NtDllInfo.NtDllBase32;
+       NtDllInfo.OffsLdrpInitialize32 = NCMN::RelAddrToAddr<DWORD>(Addr+Offs, 5, *(long*)&TmpBuf[Offs+1]) - (DWORD)NtDllInfo.NtDllBase32;
        NtDllInfo.OffsLdrpInitRet32    = (Addr + Offs + 5) - NtDllInfo.NtDllBase32;
        NtDllInfo.OffsLdrpInitPatch32  = NtDllInfo.OffsLdrpInitRet32 - 5;
        memcpy(&NtDllInfo.OrigLdrInitializeThunk32, &TmpBuf, sizeof(NtDllInfo.OrigLdrInitializeThunk32));
@@ -1132,12 +1131,12 @@ int _stdcall InitNtDllsHooks(void)
 
  if(IsRunOnWow64)
   {
-   UINT64 AddrMap     = SWOW64Ext::GetProcAddress64(NtDllInfo.NtDllBase64, "NtMapViewOfSection");
-   UINT64 AddrUnMap   = SWOW64Ext::GetProcAddress64(NtDllInfo.NtDllBase64, "NtUnmapViewOfSection");
-   UINT64 AddrInitBlk = SWOW64Ext::GetProcAddress64(NtDllInfo.NtDllBase64, "LdrSystemDllInitBlock");    // Not for Windows 7
-   SWOW64Ext::memcpy((UINT64)&NtDllInfo.CodeNtMapViewOfSection, AddrMap, sizeof(NtDllInfo.CodeNtMapViewOfSection));
-   SWOW64Ext::memcpy((UINT64)&NtDllInfo.CodeNtUnmapViewOfSection, AddrUnMap, sizeof(NtDllInfo.CodeNtUnmapViewOfSection));
-   if(AddrInitBlk)SWOW64Ext::memcpy((UINT64)&NtDllInfo.LdrSystemDllInitBlock, AddrInitBlk, sizeof(NtDllInfo.LdrSystemDllInitBlock));
+   UINT64 AddrMap     = NWOW64E::GetProcAddress64(NtDllInfo.NtDllBase64, "NtMapViewOfSection");
+   UINT64 AddrUnMap   = NWOW64E::GetProcAddress64(NtDllInfo.NtDllBase64, "NtUnmapViewOfSection");
+   UINT64 AddrInitBlk = NWOW64E::GetProcAddress64(NtDllInfo.NtDllBase64, "LdrSystemDllInitBlock");    // Not for Windows 7
+   NWOW64E::memcpy((UINT64)&NtDllInfo.CodeNtMapViewOfSection, AddrMap, sizeof(NtDllInfo.CodeNtMapViewOfSection));
+   NWOW64E::memcpy((UINT64)&NtDllInfo.CodeNtUnmapViewOfSection, AddrUnMap, sizeof(NtDllInfo.CodeNtUnmapViewOfSection));
+   if(AddrInitBlk)NWOW64E::memcpy((UINT64)&NtDllInfo.LdrSystemDllInitBlock, AddrInitBlk, sizeof(NtDllInfo.LdrSystemDllInitBlock));
    NtDllInfo.AddrOfLdrSystemDllInitBlock = AddrInitBlk;
   }
    else
@@ -1195,7 +1194,7 @@ bool _stdcall DoAppFinalization(void)
 //------------------------------------------------------------------------------------------------------------
 int _stdcall LoadCallbacDriver(PWSTR DrvName, PWSTR DrvNameEx, PWSTR DPath)
 {
- bool DrvSha256 = (GetRealVersionInfo() & 0xFF) > 8;     // Windows 8
+ bool DrvSha256 = (NNTDLL::GetRealVersionInfo() & 0xFF) > 8;     // Windows 8
    
  int ResA = SaveDriverToFile(DrvName, IsRunOnWow64, DPath, DrvPath, DrvSha256);    
  if((ResA < 0) || !*DPath){DBGMSG("No driver file: %u!",ResA); return -1;}

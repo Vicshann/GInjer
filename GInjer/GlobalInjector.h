@@ -25,17 +25,18 @@
 #define WIN32_LEAN_AND_MEAN    
 #define ctNoProtStack    // Reduces size of injected loader     
 
-#include <windows.h>
-#include "Utils.h"
+#include "Common.hpp"
+//#include <windows.h>
+//#include "Utils.h"
 #include "DrvLoader.hpp"
 #include "CBProcess.hpp"
 #include "wow64ext.hpp"
-#include "FormatPE.h"
-#include "CompileTime.hpp"
+//#include "FormatPE.h"
+//#include "CompileTime.hpp"
 #include "LoaderCode.h"
-#include "HDE.h"
-#include "UniHook.hpp"
-#include "InjDllLdr.hpp"
+//#include "HDE.h"
+//#include "UniHook.hpp"
+//#include "InjDllLdr.hpp"
 #include "SrvControl.hpp"
 #include "Paq8.hpp"
 
@@ -79,15 +80,17 @@ struct SPathHandleDescr
   {
    if(OptPath)                // Should result in a shorter path than '\??\HarddiskVolumeX\'
     {
-     if(!OptPathLen)OptPathLen = lstrlenW(OptPath);
+     if(!OptPathLen)OptPathLen = lstrlenW(OptPath);   // not including the terminating null character
      Path.Resize(OptPathLen);
     }
      else Path.Resize(MAX_PATH);
-   DWORD Len = GetFinalPathNameByHandleW(this->hFSObj, this->Path.c_data(), this->Path.Count(), VOLUME_NAME_DOS); 
-   if(Len > this->Path.Count())   // Len includes 0
+   DWORD Len = GetFinalPathNameByHandleW(this->hFSObj, this->Path.c_data(), this->Path.Count()+1, VOLUME_NAME_DOS);   // Path size must include the terminating null character
+   if(!Len && (GetLastError() == ERROR_FILE_NOT_FOUND)){LOGMSG("Hidden volumes are not supported! Try DISKPART -> attributes volume clear hidden"); return 0;}              
+   if(!Len){LOGMSG("GetFinalPathNameByHandleW failed with %u!", GetLastError()); return 0;}    
+   if(Len > this->Path.Count()) // Resize the buffer and try again  // Len does not include 0 if W version is used
     {
      Path.Resize(Len-1);
-     Len = GetFinalPathNameByHandleW(this->hFSObj, this->Path.c_data(), this->Path.Count(), VOLUME_NAME_DOS); 
+     Len = GetFinalPathNameByHandleW(this->hFSObj, this->Path.c_data(), this->Path.Count()+1, VOLUME_NAME_DOS); 
     }
    int  offs = 0;
    PWSTR Ptr = this->Path.c_data();
@@ -116,7 +119,7 @@ public:
  CModPathArr(void){memset(this,0,sizeof(CModPathArr));}
  ~CModPathArr()
  {
-  for(int ctr=0;ctr < this->Array.Count();ctr++)
+  for(UINT ctr=0;ctr < this->Array.Count();ctr++)
    {
     SPathHandleDescr* Obj = &this->Array.c_data()[ctr];
     if(Obj->hFSObj)CloseHandle(Obj->hFSObj);

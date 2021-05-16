@@ -469,10 +469,10 @@ _declspec(noinline) void _fastcall ImportFromNtDll(SLdrDesc* Desc, SNtDllProcs* 
  LPSTR nNtMapViewOfSection     = sNtMapViewOfSection.Decrypt();
  LPSTR nNtUnmapViewOfSection   = sNtUnmapViewOfSection.Decrypt();
  PBYTE NtDllBase               = (PBYTE)Desc->NtDllBase;
- DOS_HEADER* DosHdr            = (DOS_HEADER*)NtDllBase;
- WIN_HEADER<PECURRENT>* WinHdr = (WIN_HEADER<PECURRENT>*)&NtDllBase[DosHdr->OffsetHeaderPE];
- DATA_DIRECTORY* ExportDir     = &WinHdr->OptionalHeader.DataDirectories.ExportTable;
- EXPORT_DIR* Export            = (EXPORT_DIR*)&NtDllBase[ExportDir->DirectoryRVA];
+ NPEFMT::DOS_HEADER* DosHdr    = (NPEFMT::DOS_HEADER*)NtDllBase;
+ NPEFMT::WIN_HEADER<NPEFMT::PECURRENT>* WinHdr = (NPEFMT::WIN_HEADER<NPEFMT::PECURRENT>*)&NtDllBase[DosHdr->OffsetHeaderPE];
+ NPEFMT::DATA_DIRECTORY* ExportDir     = &WinHdr->OptionalHeader.DataDirectories.ExportTable;
+ NPEFMT::EXPORT_DIR* Export            = (NPEFMT::EXPORT_DIR*)&NtDllBase[ExportDir->DirectoryRVA];
                    
  PDWORD NamePointers = (PDWORD)&NtDllBase[Export->NamePointersRVA];
  PDWORD AddressTable = (PDWORD)&NtDllBase[Export->AddressTableRVA];
@@ -559,9 +559,9 @@ int _fastcall GenerateBinLdr(void)
 #endif
  char KeyLine[128];
  CArr<BYTE> DstFile;
- SECTION_HEADER* Sec = NULL;
+ NPEFMT::SECTION_HEADER* Sec = NULL;
  PBYTE ModBase = (PBYTE)GetModuleHandleA(NULL);
- if(!GetModuleSection(ModBase, LDRSECNAME, &Sec)){DBGMSG("No loader section found!"); return -1;}
+ if(!NPEFMT::GetModuleSection(ModBase, LDRSECNAME, &Sec)){DBGMSG("No loader section found!"); return -1;}
  UINT SecLen = (Sec->VirtualSize + 15) & ~0xF;  // It is equal to exact size of code
  BYTE XorKey = BINKEY;
  int llen = wsprintfA(KeyLine,"#define XKey%s  0x%02X\r\n",&BinLdrName,XorKey);

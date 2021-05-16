@@ -36,6 +36,9 @@
     <ClCompile Include="DriverCode.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\COMMON\RTL\gcvt.cpp">
+      <Filter>Common</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="GlobalInjector.h">
@@ -103,6 +106,9 @@
     </ClInclude>
     <ClInclude Include="CBProcess.hpp">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\COMMON\Common.hpp">
+      <Filter>Common</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
